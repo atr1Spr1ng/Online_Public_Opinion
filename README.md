@@ -19,6 +19,17 @@ Online_Public_Opinion/
 
 Spring Boot 负责对外接口和业务编排，Python 负责爬虫及后续算法任务，服务之间通过 HTTP 通信。
 
+选题功能与核心模块对应关系：
+
+| 选题要求 | 对应模块 |
+|---|---|
+| 网络爬虫 | `collection` + `services/crawler` |
+| 数据清洗及预处理 | `content` + `services/content` |
+| 内容分析、情感分析 | `analysis` + `services/intelligence` |
+| 热点发现、事件聚合和预测 | `event` + `services/intelligence` |
+| 虚假文本检测、传播路径 | `analysis/event` + `services/intelligence` |
+| 报告和智能问答扩展 | `report` + `services/report` |
+
 当前网络新闻抓取链路：
 
 ```text
