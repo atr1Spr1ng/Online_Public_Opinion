@@ -15,6 +15,8 @@ import com.bupt.publicopinion.collection.mapper.CrawlTaskItemMapper;
 import com.bupt.publicopinion.collection.mapper.CrawlTaskMapper;
 import com.bupt.publicopinion.collection.mapper.NewsSourceMapper;
 import com.bupt.publicopinion.collection.service.CrawlerService;
+import com.bupt.publicopinion.collection.vo.BatchCrawlerTaskFailure;
+import com.bupt.publicopinion.collection.vo.BatchCrawlerTaskResult;
 import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
@@ -28,6 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -106,6 +109,51 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     @Override
+    public CrawlerTaskSaveResult createCrawlTaskBySource(Long sourceId, Integer limit) {
+        NewsSource source = newsSourceMapper.selectById(sourceId);
+        if (source == null) {
+            throw new IllegalArgumentException("新闻源不存在: " + sourceId);
+        }
+        if (source.getStatus() == null || source.getStatus() != 1) {
+            throw new IllegalArgumentException("新闻源未启用: " + sourceId);
+        }
+        return createCrawlTask(new NewsDiscoverRequest(source.getSourceUrl(), normalizeLimit(limit)));
+    }
+
+    @Override
+    public BatchCrawlerTaskResult createCrawlTasksForAllEnabledSources(Integer limit) {
+        List<NewsSource> sources = newsSourceMapper.selectList(
+                new LambdaQueryWrapper<NewsSource>()
+                        .eq(NewsSource::getStatus, 1)
+                        .orderByAsc(NewsSource::getId)
+        );
+        List<CrawlerTaskSaveResult> tasks = new ArrayList<>();
+        List<BatchCrawlerTaskFailure> failures = new ArrayList<>();
+        int taskLimit = normalizeLimit(limit);
+
+        for (NewsSource source : sources) {
+            try {
+                tasks.add(createCrawlTask(new NewsDiscoverRequest(source.getSourceUrl(), taskLimit)));
+            } catch (RuntimeException exception) {
+                failures.add(new BatchCrawlerTaskFailure(
+                        source.getId(),
+                        source.getSourceName(),
+                        source.getSourceUrl(),
+                        exception.getMessage()
+                ));
+            }
+        }
+
+        return new BatchCrawlerTaskResult(
+                sources.size(),
+                tasks.size(),
+                failures.size(),
+                tasks,
+                failures
+        );
+    }
+
+    @Override
     public PageResult<CrawlTask> listCrawlTasks(long pageNum, long pageSize) {
         Page<CrawlTask> page = new Page<>(normalizePageNum(pageNum), normalizePageSize(pageSize));
         Page<CrawlTask> result = crawlTaskMapper.selectPage(
@@ -175,6 +223,18 @@ public class CrawlerServiceImpl implements CrawlerService {
         source.setSourceUrl(request.sourceUrl());
         source.setStatus(request.status());
         newsSourceMapper.insert(source);
+        return source;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public NewsSource updateNewsSourceStatus(Long sourceId, Integer status) {
+        NewsSource source = newsSourceMapper.selectById(sourceId);
+        if (source == null) {
+            throw new IllegalArgumentException("新闻源不存在: " + sourceId);
+        }
+        source.setStatus(status != null && status == 1 ? 1 : 0);
+        newsSourceMapper.updateById(source);
         return source;
     }
 
@@ -297,5 +357,15 @@ public class CrawlerServiceImpl implements CrawlerService {
             return 10;
         }
         return Math.min(pageSize, 100);
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null) {
+            return 5;
+        }
+        if (limit < 1) {
+            return 1;
+        }
+        return Math.min(limit, 100);
     }
 }

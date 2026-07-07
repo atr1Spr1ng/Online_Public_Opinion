@@ -16,7 +16,7 @@ public record NewsDiscoverRequest(
 ) {
     public NewsDiscoverRequest {
         if (limit == null) {
-            limit = 20;
+            limit = 5;
         }
     }
 }

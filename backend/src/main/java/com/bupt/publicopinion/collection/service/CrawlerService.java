@@ -6,6 +6,7 @@ import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
 import com.bupt.publicopinion.collection.entity.ArticleRaw;
 import com.bupt.publicopinion.collection.entity.CrawlTask;
 import com.bupt.publicopinion.collection.entity.NewsSource;
+import com.bupt.publicopinion.collection.vo.BatchCrawlerTaskResult;
 import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
@@ -26,6 +27,10 @@ public interface CrawlerService {
 
     CrawlerTaskSaveResult createCrawlTask(NewsDiscoverRequest request);
 
+    CrawlerTaskSaveResult createCrawlTaskBySource(Long sourceId, Integer limit);
+
+    BatchCrawlerTaskResult createCrawlTasksForAllEnabledSources(Integer limit);
+
     PageResult<CrawlTask> listCrawlTasks(long pageNum, long pageSize);
 
     CrawlTaskDetailResult getCrawlTaskDetail(Long taskId);
@@ -35,4 +40,6 @@ public interface CrawlerService {
     PageResult<NewsSource> listNewsSources(long pageNum, long pageSize);
 
     NewsSource createNewsSource(NewsSourceRequest request);
+
+    NewsSource updateNewsSourceStatus(Long sourceId, Integer status);
 }

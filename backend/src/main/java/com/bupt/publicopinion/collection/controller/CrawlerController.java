@@ -7,6 +7,7 @@ import com.bupt.publicopinion.collection.entity.ArticleRaw;
 import com.bupt.publicopinion.collection.entity.CrawlTask;
 import com.bupt.publicopinion.collection.entity.NewsSource;
 import com.bupt.publicopinion.collection.service.CrawlerService;
+import com.bupt.publicopinion.collection.vo.BatchCrawlerTaskResult;
 import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
@@ -63,6 +64,21 @@ public class CrawlerController {
         return crawlerService.createCrawlTask(request);
     }
 
+    @PostMapping("/tasks/source/{sourceId}")
+    public CrawlerTaskSaveResult createCrawlTaskBySource(
+            @PathVariable Long sourceId,
+            @RequestParam(defaultValue = "5") Integer limit
+    ) {
+        return crawlerService.createCrawlTaskBySource(sourceId, limit);
+    }
+
+    @PostMapping("/tasks/all-enabled")
+    public BatchCrawlerTaskResult createCrawlTasksForAllEnabledSources(
+            @RequestParam(defaultValue = "5") Integer limit
+    ) {
+        return crawlerService.createCrawlTasksForAllEnabledSources(limit);
+    }
+
     @GetMapping("/tasks")
     public PageResult<CrawlTask> listCrawlTasks(
             @RequestParam(defaultValue = "1") long pageNum,
@@ -95,6 +111,14 @@ public class CrawlerController {
     @PostMapping("/sources")
     public NewsSource createNewsSource(@Valid @RequestBody NewsSourceRequest request) {
         return crawlerService.createNewsSource(request);
+    }
+
+    @PostMapping("/sources/{sourceId}/status")
+    public NewsSource updateNewsSourceStatus(
+            @PathVariable Long sourceId,
+            @RequestParam Integer status
+    ) {
+        return crawlerService.updateNewsSourceStatus(sourceId, status);
     }
 
     @PostMapping("/news/test")
