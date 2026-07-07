@@ -9,8 +9,7 @@ router = APIRouter(prefix="/internal/crawler/news", tags=["news crawler"])
 service = CrawlerService()
 
 
-@router.post("/test", response_model=CrawlResult, response_model_by_alias=True)
-def test_news_crawler(request: NewsCrawlRequest) -> CrawlResult:
+def _crawl_news(request: NewsCrawlRequest) -> CrawlResult:
     try:
         return service.crawl_news(str(request.url))
     except CrawlerException as exc:
@@ -18,3 +17,13 @@ def test_news_crawler(request: NewsCrawlRequest) -> CrawlResult:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+
+
+@router.post("/crawl", response_model=CrawlResult, response_model_by_alias=True)
+def crawl_news(request: NewsCrawlRequest) -> CrawlResult:
+    return _crawl_news(request)
+
+
+@router.post("/test", response_model=CrawlResult, response_model_by_alias=True)
+def test_news_crawler(request: NewsCrawlRequest) -> CrawlResult:
+    return _crawl_news(request)

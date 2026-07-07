@@ -40,4 +40,12 @@ CrawlerController
   → news-please / readability
 ```
 
+当前已开放的爬虫接口：
+
+```text
+GET  /api/crawler/health       检查 Spring Boot 到 Python crawler 的链路
+POST /api/crawler/news/crawl   抓取单条新闻 URL
+POST /api/crawler/news/test    兼容保留的测试入口
+```
+
 详细目录职责见 [help.md](help.md)。

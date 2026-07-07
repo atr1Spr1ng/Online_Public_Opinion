@@ -2,6 +2,7 @@ package com.bupt.publicopinion.collection.client;
 
 import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
 import com.bupt.publicopinion.collection.exception.CrawlerServiceException;
+import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -16,10 +17,28 @@ public class PythonCrawlerClient {
         this.crawlerRestClient = crawlerRestClient;
     }
 
+    public CrawlerHealthResult checkHealth() {
+        try {
+            CrawlerHealthResult result = crawlerRestClient.get()
+                    .uri("/internal/health")
+                    .retrieve()
+                    .body(CrawlerHealthResult.class);
+
+            if (result == null) {
+                throw new CrawlerServiceException("Python 爬虫服务返回空响应");
+            }
+            return result;
+        } catch (CrawlerServiceException exception) {
+            throw exception;
+        } catch (RestClientException exception) {
+            throw new CrawlerServiceException("调用 Python 爬虫服务失败", exception);
+        }
+    }
+
     public NewsCrawlResult crawlNews(NewsCrawlRequest request) {
         try {
             NewsCrawlResult result = crawlerRestClient.post()
-                    .uri("/internal/crawler/news/test")
+                    .uri("/internal/crawler/news/crawl")
                     .body(request)
                     .retrieve()
                     .body(NewsCrawlResult.class);
