@@ -5,7 +5,6 @@ import com.bupt.publicopinion.collection.exception.CrawlerServiceException;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.content.exception.ContentServiceException;
 import com.bupt.publicopinion.fake.exception.FakeDetectionException;
-import com.bupt.publicopinion.propagation.exception.PropagationAnalysisException;
 import com.bupt.publicopinion.report.exception.ReportServiceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,14 +35,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(FakeDetectionException.class)
     public ResponseEntity<ApiResult<Void>> handleFakeDetectionException(
             FakeDetectionException exception
-    ) {
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
-    }
-
-    @ExceptionHandler(PropagationAnalysisException.class)
-    public ResponseEntity<ApiResult<Void>> handlePropagationAnalysisException(
-            PropagationAnalysisException exception
     ) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
