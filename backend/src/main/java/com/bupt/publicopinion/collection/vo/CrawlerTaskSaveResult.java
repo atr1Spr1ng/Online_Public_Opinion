@@ -8,6 +8,7 @@ public record CrawlerTaskSaveResult(
         String sourceUrl,
         int totalDiscovered,
         int totalSuccess,
+        int totalDuplicate,
         int totalFailed,
         String status
 ) {
