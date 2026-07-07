@@ -19,6 +19,8 @@ Online_Public_Opinion/
 
 Spring Boot 负责对外接口和业务编排，Python 负责爬虫及后续算法任务，服务之间通过 HTTP 通信。
 
+当前新闻采集入库会先按 URL 去重：已存在的文章不会再次抓取正文，任务明细标记为 `DUPLICATE`。
+
 选题功能与核心模块对应关系：
 
 | 选题要求 | 对应模块 |
