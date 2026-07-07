@@ -4,6 +4,7 @@ import com.bupt.publicopinion.collection.dto.NewsDiscoverRequest;
 import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
 import com.bupt.publicopinion.collection.service.CrawlerService;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
+import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
@@ -47,6 +48,11 @@ public class CrawlerController {
     @PostMapping("/news/collect")
     public NewsCollectResult collectNews(@Valid @RequestBody NewsDiscoverRequest request) {
         return crawlerService.collectNews(request);
+    }
+
+    @PostMapping("/tasks")
+    public CrawlerTaskSaveResult createCrawlTask(@Valid @RequestBody NewsDiscoverRequest request) {
+        return crawlerService.createCrawlTask(request);
     }
 
     @PostMapping("/news/test")

@@ -47,7 +47,10 @@ GET  /api/crawler/health       检查 Spring Boot 到 Python crawler 的链路
 POST /api/crawler/news/discover 从首页/频道页发现新闻详情链接
 POST /api/crawler/news/crawl   抓取单条新闻 URL
 POST /api/crawler/news/collect 自动发现链接并批量抓取正文
+POST /api/crawler/tasks        自动采集并保存到数据库
 POST /api/crawler/news/test    兼容保留的测试入口
 ```
+
+接口测试工具中可统一放到 `crwal` group；代码和接口路径仍使用标准命名 `crawler`。
 
 详细目录职责见 [help.md](help.md)。
