@@ -20,6 +20,7 @@ import com.bupt.publicopinion.collection.vo.BatchCrawlerTaskResult;
 import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
+import com.bupt.publicopinion.collection.vo.DiscoveredNewsLink;
 import com.bupt.publicopinion.collection.vo.FailedNewsCrawl;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
@@ -82,28 +83,66 @@ public class CrawlerServiceImpl implements CrawlerService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public CrawlerTaskSaveResult createCrawlTask(NewsDiscoverRequest request) {
-        NewsCollectResult collectResult = pythonCrawlerClient.collectNews(request);
-        NewsSource source = saveOrUpdateSource(collectResult);
-        CrawlTask task = saveTask(request, collectResult, source.getId());
+        NewsDiscoverResult discoverResult = pythonCrawlerClient.discoverNewsLinks(request);
+        NewsSource source = saveOrUpdateSource(
+                discoverResult.sourceUrl(),
+                discoverResult.sourceName(),
+                discoverResult.sourceType()
+        );
+        CrawlTask task = createPendingTask(request, discoverResult, source.getId());
+        int successCount = 0;
+        int duplicateCount = 0;
+        int failedCount = 0;
 
-        for (NewsCrawlResult article : collectResult.articles()) {
-            ArticleRaw articleRaw = saveOrUpdateArticle(article, collectResult);
-            saveSuccessTaskItem(task.getId(), articleRaw);
+        for (DiscoveredNewsLink link : discoverResult.links()) {
+            ArticleRaw existing = findArticleByOriginalUrl(link.url());
+            if (existing != null) {
+                duplicateCount++;
+                saveDuplicateTaskItem(task.getId(), existing);
+                continue;
+            }
+
+            try {
+                NewsCrawlResult article = pythonCrawlerClient.crawlNews(new NewsCrawlRequest(link.url()));
+                if (!"SUCCESS".equals(article.extractStatus())) {
+                    failedCount++;
+                    saveFailedTaskItem(task.getId(), new FailedNewsCrawl(
+                            link.url(),
+                            link.title(),
+                            article.message()
+                    ));
+                    continue;
+                }
+
+                ArticleRaw articleRaw = saveArticle(article, discoverResult.sourceName(), discoverResult.sourceType());
+                successCount++;
+                saveSuccessTaskItem(task.getId(), articleRaw);
+            } catch (RuntimeException exception) {
+                failedCount++;
+                saveFailedTaskItem(task.getId(), new FailedNewsCrawl(
+                        link.url(),
+                        link.title(),
+                        exception.getMessage()
+                ));
+            }
         }
 
-        for (FailedNewsCrawl failure : collectResult.failures()) {
-            saveFailedTaskItem(task.getId(), failure);
-        }
+        task.setTotalSuccess(successCount);
+        task.setTotalDuplicate(duplicateCount);
+        task.setTotalFailed(failedCount);
+        task.setStatus(resolveTaskStatus(successCount, duplicateCount, failedCount));
+        crawlTaskMapper.updateById(task);
 
         return new CrawlerTaskSaveResult(
                 task.getId(),
                 source.getId(),
-                collectResult.sourceName(),
-                collectResult.sourceType(),
-                collectResult.sourceUrl(),
-                collectResult.totalDiscovered(),
-                collectResult.totalSuccess(),
-                collectResult.totalFailed(),
+                discoverResult.sourceName(),
+                discoverResult.sourceType(),
+                discoverResult.sourceUrl(),
+                discoverResult.totalFound(),
+                successCount,
+                duplicateCount,
+                failedCount,
                 task.getStatus()
         );
     }
@@ -238,56 +277,59 @@ public class CrawlerServiceImpl implements CrawlerService {
         return source;
     }
 
-    private NewsSource saveOrUpdateSource(NewsCollectResult collectResult) {
+    private NewsSource saveOrUpdateSource(String sourceUrl, String sourceName, String sourceType) {
         NewsSource existing = newsSourceMapper.selectOne(
                 new LambdaQueryWrapper<NewsSource>()
-                        .eq(NewsSource::getSourceUrl, collectResult.sourceUrl())
+                        .eq(NewsSource::getSourceUrl, sourceUrl)
                         .last("LIMIT 1")
         );
 
         if (existing != null) {
-            existing.setSourceName(collectResult.sourceName());
-            existing.setSourceType(collectResult.sourceType());
+            existing.setSourceName(sourceName);
+            existing.setSourceType(sourceType);
             existing.setStatus(1);
             newsSourceMapper.updateById(existing);
             return existing;
         }
 
         NewsSource source = new NewsSource();
-        source.setSourceName(collectResult.sourceName());
-        source.setSourceType(collectResult.sourceType());
-        source.setSourceUrl(collectResult.sourceUrl());
+        source.setSourceName(sourceName);
+        source.setSourceType(sourceType);
+        source.setSourceUrl(sourceUrl);
         source.setStatus(1);
         newsSourceMapper.insert(source);
         return source;
     }
 
-    private CrawlTask saveTask(NewsDiscoverRequest request, NewsCollectResult collectResult, Long sourceId) {
+    private CrawlTask createPendingTask(NewsDiscoverRequest request, NewsDiscoverResult discoverResult, Long sourceId) {
         CrawlTask task = new CrawlTask();
         task.setSourceId(sourceId);
-        task.setSourceUrl(collectResult.sourceUrl());
-        task.setFinalUrl(collectResult.finalUrl());
-        task.setSourceName(collectResult.sourceName());
-        task.setSourceType(collectResult.sourceType());
+        task.setSourceUrl(discoverResult.sourceUrl());
+        task.setFinalUrl(discoverResult.finalUrl());
+        task.setSourceName(discoverResult.sourceName());
+        task.setSourceType(discoverResult.sourceType());
         task.setRequestLimit(request.limit());
-        task.setTotalDiscovered(collectResult.totalDiscovered());
-        task.setTotalSuccess(collectResult.totalSuccess());
-        task.setTotalFailed(collectResult.totalFailed());
-        task.setStatus(resolveTaskStatus(collectResult));
+        task.setTotalDiscovered(discoverResult.totalFound());
+        task.setTotalSuccess(0);
+        task.setTotalDuplicate(0);
+        task.setTotalFailed(0);
+        task.setStatus("RUNNING");
         crawlTaskMapper.insert(task);
         return task;
     }
 
-    private ArticleRaw saveOrUpdateArticle(NewsCrawlResult article, NewsCollectResult collectResult) {
-        ArticleRaw existing = articleRawMapper.selectOne(
+    private ArticleRaw findArticleByOriginalUrl(String originalUrl) {
+        return articleRawMapper.selectOne(
                 new LambdaQueryWrapper<ArticleRaw>()
-                        .eq(ArticleRaw::getOriginalUrl, article.originalUrl())
+                        .eq(ArticleRaw::getOriginalUrl, originalUrl)
                         .last("LIMIT 1")
         );
+    }
 
-        ArticleRaw articleRaw = existing == null ? new ArticleRaw() : existing;
-        articleRaw.setSourceName(collectResult.sourceName());
-        articleRaw.setSourceType(collectResult.sourceType());
+    private ArticleRaw saveArticle(NewsCrawlResult article, String sourceName, String sourceType) {
+        ArticleRaw articleRaw = new ArticleRaw();
+        articleRaw.setSourceName(sourceName);
+        articleRaw.setSourceType(sourceType);
         articleRaw.setOriginalUrl(article.originalUrl());
         articleRaw.setFinalUrl(article.finalUrl());
         articleRaw.setStatusCode(article.statusCode());
@@ -302,11 +344,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         articleRaw.setLanguage(article.language());
         articleRaw.setFetchedAt(article.fetchedAt() == null ? null : article.fetchedAt().toLocalDateTime());
 
-        if (existing == null) {
-            articleRawMapper.insert(articleRaw);
-        } else {
-            articleRawMapper.updateById(articleRaw);
-        }
+        articleRawMapper.insert(articleRaw);
         return articleRaw;
     }
 
@@ -320,6 +358,17 @@ public class CrawlerServiceImpl implements CrawlerService {
         crawlTaskItemMapper.insert(item);
     }
 
+    private void saveDuplicateTaskItem(Long taskId, ArticleRaw articleRaw) {
+        CrawlTaskItem item = new CrawlTaskItem();
+        item.setTaskId(taskId);
+        item.setArticleId(articleRaw.getId());
+        item.setTitle(articleRaw.getTitle());
+        item.setUrl(articleRaw.getOriginalUrl());
+        item.setStatus("DUPLICATE");
+        item.setFailureReason("文章已存在，跳过重复入库");
+        crawlTaskItemMapper.insert(item);
+    }
+
     private void saveFailedTaskItem(Long taskId, FailedNewsCrawl failure) {
         CrawlTaskItem item = new CrawlTaskItem();
         item.setTaskId(taskId);
@@ -330,12 +379,18 @@ public class CrawlerServiceImpl implements CrawlerService {
         crawlTaskItemMapper.insert(item);
     }
 
-    private String resolveTaskStatus(NewsCollectResult collectResult) {
-        if (collectResult.totalSuccess() == 0) {
+    private String resolveTaskStatus(int successCount, int duplicateCount, int failedCount) {
+        if (successCount == 0 && duplicateCount > 0 && failedCount == 0) {
+            return "DUPLICATE";
+        }
+        if (successCount == 0) {
             return "FAILED";
         }
-        if (collectResult.totalFailed() > 0) {
+        if (failedCount > 0) {
             return "PARTIAL_FAILED";
+        }
+        if (duplicateCount > 0) {
+            return "SUCCESS_WITH_DUPLICATE";
         }
         return "SUCCESS";
     }

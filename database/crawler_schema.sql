@@ -19,8 +19,9 @@ CREATE TABLE IF NOT EXISTS crawl_task (
     request_limit INT NOT NULL COMMENT '本次请求采集数量',
     total_discovered INT NOT NULL DEFAULT 0 COMMENT '发现链接数量',
     total_success INT NOT NULL DEFAULT 0 COMMENT '成功抓取数量',
+    total_duplicate INT NOT NULL DEFAULT 0 COMMENT '重复文章数量',
     total_failed INT NOT NULL DEFAULT 0 COMMENT '失败数量',
-    status VARCHAR(30) NOT NULL COMMENT 'SUCCESS/PARTIAL_FAILED/FAILED',
+    status VARCHAR(30) NOT NULL COMMENT 'SUCCESS/SUCCESS_WITH_DUPLICATE/DUPLICATE/PARTIAL_FAILED/FAILED',
     create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_crawl_task_source_id (source_id),
@@ -57,7 +58,7 @@ CREATE TABLE IF NOT EXISTS crawl_task_item (
     article_id BIGINT NULL COMMENT '文章 ID，失败时为空',
     title VARCHAR(512) NULL COMMENT '发现时的标题',
     url VARCHAR(1024) NOT NULL COMMENT '新闻详情页 URL',
-    status VARCHAR(30) NOT NULL COMMENT 'SUCCESS/FAILED',
+    status VARCHAR(30) NOT NULL COMMENT 'SUCCESS/DUPLICATE/FAILED',
     failure_reason VARCHAR(1024) NULL COMMENT '失败原因',
     create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -65,3 +66,15 @@ CREATE TABLE IF NOT EXISTS crawl_task_item (
     KEY idx_task_item_article_id (article_id),
     KEY idx_task_item_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='采集任务明细表';
+
+INSERT INTO crawl_news_source (source_name, source_type, source_url, status)
+VALUES
+    ('新浪新闻', 'portal', 'https://news.sina.com.cn/', 1),
+    ('中国新闻网', 'official', 'https://www.chinanews.com.cn/', 1),
+    ('澎湃新闻', 'original', 'https://www.thepaper.cn/', 1),
+    ('界面新闻', 'original', 'https://www.jiemian.com/', 1),
+    ('人民网', 'official', 'https://www.people.com.cn/', 1)
+ON DUPLICATE KEY UPDATE
+    source_name = VALUES(source_name),
+    source_type = VALUES(source_type),
+    status = VALUES(status);
