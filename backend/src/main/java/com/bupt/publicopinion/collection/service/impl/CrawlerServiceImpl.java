@@ -1,9 +1,11 @@
 package com.bupt.publicopinion.collection.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.bupt.publicopinion.collection.client.PythonCrawlerClient;
 import com.bupt.publicopinion.collection.dto.NewsDiscoverRequest;
 import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
+import com.bupt.publicopinion.collection.dto.NewsSourceRequest;
 import com.bupt.publicopinion.collection.entity.ArticleRaw;
 import com.bupt.publicopinion.collection.entity.CrawlTask;
 import com.bupt.publicopinion.collection.entity.CrawlTaskItem;
@@ -13,16 +15,20 @@ import com.bupt.publicopinion.collection.mapper.CrawlTaskItemMapper;
 import com.bupt.publicopinion.collection.mapper.CrawlTaskMapper;
 import com.bupt.publicopinion.collection.mapper.NewsSourceMapper;
 import com.bupt.publicopinion.collection.service.CrawlerService;
+import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
 import com.bupt.publicopinion.collection.vo.FailedNewsCrawl;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 public class CrawlerServiceImpl implements CrawlerService {
@@ -97,6 +103,79 @@ public class CrawlerServiceImpl implements CrawlerService {
                 collectResult.totalFailed(),
                 task.getStatus()
         );
+    }
+
+    @Override
+    public PageResult<CrawlTask> listCrawlTasks(long pageNum, long pageSize) {
+        Page<CrawlTask> page = new Page<>(normalizePageNum(pageNum), normalizePageSize(pageSize));
+        Page<CrawlTask> result = crawlTaskMapper.selectPage(
+                page,
+                new LambdaQueryWrapper<CrawlTask>()
+                        .orderByDesc(CrawlTask::getCreateTime)
+                        .orderByDesc(CrawlTask::getId)
+        );
+        return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public CrawlTaskDetailResult getCrawlTaskDetail(Long taskId) {
+        CrawlTask task = crawlTaskMapper.selectById(taskId);
+        List<CrawlTaskItem> items = crawlTaskItemMapper.selectList(
+                new LambdaQueryWrapper<CrawlTaskItem>()
+                        .eq(CrawlTaskItem::getTaskId, taskId)
+                        .orderByAsc(CrawlTaskItem::getId)
+        );
+        return new CrawlTaskDetailResult(task, items);
+    }
+
+    @Override
+    public PageResult<ArticleRaw> listArticles(long pageNum, long pageSize) {
+        Page<ArticleRaw> page = new Page<>(normalizePageNum(pageNum), normalizePageSize(pageSize));
+        Page<ArticleRaw> result = articleRawMapper.selectPage(
+                page,
+                new LambdaQueryWrapper<ArticleRaw>()
+                        .orderByDesc(ArticleRaw::getCreateTime)
+                        .orderByDesc(ArticleRaw::getId)
+        );
+        return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public PageResult<NewsSource> listNewsSources(long pageNum, long pageSize) {
+        Page<NewsSource> page = new Page<>(normalizePageNum(pageNum), normalizePageSize(pageSize));
+        Page<NewsSource> result = newsSourceMapper.selectPage(
+                page,
+                new LambdaQueryWrapper<NewsSource>()
+                        .orderByDesc(NewsSource::getCreateTime)
+                        .orderByDesc(NewsSource::getId)
+        );
+        return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public NewsSource createNewsSource(NewsSourceRequest request) {
+        NewsSource existing = newsSourceMapper.selectOne(
+                new LambdaQueryWrapper<NewsSource>()
+                        .eq(NewsSource::getSourceUrl, request.sourceUrl())
+                        .last("LIMIT 1")
+        );
+
+        if (existing != null) {
+            existing.setSourceName(request.sourceName());
+            existing.setSourceType(request.sourceType());
+            existing.setStatus(request.status());
+            newsSourceMapper.updateById(existing);
+            return existing;
+        }
+
+        NewsSource source = new NewsSource();
+        source.setSourceName(request.sourceName());
+        source.setSourceType(request.sourceType());
+        source.setSourceUrl(request.sourceUrl());
+        source.setStatus(request.status());
+        newsSourceMapper.insert(source);
+        return source;
     }
 
     private NewsSource saveOrUpdateSource(NewsCollectResult collectResult) {
@@ -207,5 +286,16 @@ public class CrawlerServiceImpl implements CrawlerService {
         } catch (JsonProcessingException exception) {
             return "[]";
         }
+    }
+
+    private long normalizePageNum(long pageNum) {
+        return Math.max(pageNum, 1);
+    }
+
+    private long normalizePageSize(long pageSize) {
+        if (pageSize < 1) {
+            return 10;
+        }
+        return Math.min(pageSize, 100);
     }
 }
