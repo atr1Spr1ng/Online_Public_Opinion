@@ -18,6 +18,7 @@
 .env
 .env.*
 !.env.example
+services/**/run.sh
 
 # Logs and runtime files
 *.log

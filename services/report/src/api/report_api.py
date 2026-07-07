@@ -10,4 +10,6 @@ qa_service = QaService()
 
 @router.post("/qa", response_model=QaResponse)
 def answer_question(request: QaRequest):
-    return qa_service.answer(request)
+    # 解析 Java 端传来的 report JSON
+    report = ReportData.parse(request.report)
+    return qa_service.answer_question(request.question, report)
