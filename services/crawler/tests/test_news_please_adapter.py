@@ -44,6 +44,8 @@ def test_extracts_news_fields_from_html() -> None:
     assert result.status_code == 200
     assert result.title == "测试新闻标题"
     assert "第一段正文" in (result.content or "")
+    assert result.content_length > 0
+    assert result.extract_status == "SUCCESS"
     assert result.final_url == "https://example.com/news/1"
 
 

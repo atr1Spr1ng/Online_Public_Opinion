@@ -10,8 +10,11 @@ public record NewsCrawlResult(
         int statusCode,
         String title,
         List<String> authors,
-        OffsetDateTime publishedAt,
+        String publishedAt,
         String content,
+        int contentLength,
+        String extractStatus,
+        String message,
         String mainImage,
         String language,
         OffsetDateTime fetchedAt

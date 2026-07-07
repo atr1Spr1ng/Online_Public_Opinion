@@ -14,6 +14,9 @@ class CrawlResult(BaseModel):
     authors: list[str] = Field(default_factory=list)
     published_at: datetime | None = Field(default=None, alias="publishedAt")
     content: str | None = None
+    content_length: int = Field(alias="contentLength")
+    extract_status: str = Field(alias="extractStatus")
+    message: str
     main_image: str | None = Field(default=None, alias="mainImage")
     language: str | None = None
     fetched_at: datetime = Field(alias="fetchedAt")
