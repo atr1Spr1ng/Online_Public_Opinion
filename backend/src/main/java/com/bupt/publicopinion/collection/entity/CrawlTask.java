@@ -19,6 +19,7 @@ public class CrawlTask {
     private Integer requestLimit;
     private Integer totalDiscovered;
     private Integer totalSuccess;
+    private Integer totalDuplicate;
     private Integer totalFailed;
     private String status;
     private LocalDateTime createTime;
@@ -94,6 +95,14 @@ public class CrawlTask {
 
     public void setTotalSuccess(Integer totalSuccess) {
         this.totalSuccess = totalSuccess;
+    }
+
+    public Integer getTotalDuplicate() {
+        return totalDuplicate;
+    }
+
+    public void setTotalDuplicate(Integer totalDuplicate) {
+        this.totalDuplicate = totalDuplicate;
     }
 
     public Integer getTotalFailed() {
