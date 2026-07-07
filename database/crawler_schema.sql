@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS news_source (
+CREATE TABLE IF NOT EXISTS crawl_news_source (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     source_name VARCHAR(100) NOT NULL COMMENT '新闻源名称',
     source_type VARCHAR(50) NOT NULL COMMENT '新闻源类型：portal/official/original',
@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS news_source (
     create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_news_source_url (source_url(255))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='新闻源配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='爬虫新闻源配置表';
 
 CREATE TABLE IF NOT EXISTS crawl_task (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS crawl_task (
     KEY idx_crawl_task_create_time (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='采集任务表';
 
-CREATE TABLE IF NOT EXISTS article_raw (
+CREATE TABLE IF NOT EXISTS crawl_article_raw (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     source_name VARCHAR(100) NULL COMMENT '新闻源名称',
     source_type VARCHAR(50) NULL COMMENT '新闻源类型',
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS article_raw (
     UNIQUE KEY uk_article_raw_original_url (original_url(255)),
     KEY idx_article_raw_create_time (create_time),
     KEY idx_article_raw_extract_status (extract_status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='原始新闻文章表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='爬虫原始新闻文章表';
 
 CREATE TABLE IF NOT EXISTS crawl_task_item (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,

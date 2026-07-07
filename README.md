@@ -51,6 +51,6 @@ POST /api/crawler/tasks        自动采集并保存到数据库
 POST /api/crawler/news/test    兼容保留的测试入口
 ```
 
-接口测试工具中可统一放到 `crwal` group；代码和接口路径仍使用标准命名 `crawler`。
+接口测试工具中可统一放到 `crawl` group；代码和接口路径仍使用标准命名 `crawler`。
 
 详细目录职责见 [help.md](help.md)。

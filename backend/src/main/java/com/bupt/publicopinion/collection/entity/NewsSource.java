@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.LocalDateTime;
 
-@TableName("news_source")
+@TableName("crawl_news_source")
 public class NewsSource {
 
     @TableId(type = IdType.AUTO)
