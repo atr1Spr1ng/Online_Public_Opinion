@@ -64,4 +64,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResult.error(HttpStatus.INTERNAL_SERVER_ERROR.value(), "服务器内部错误"));
     }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResult<Void>> handleIllegalArgumentException(
+            IllegalArgumentException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResult.error(HttpStatus.BAD_REQUEST.value(), exception.getMessage()));
+    }
 }
