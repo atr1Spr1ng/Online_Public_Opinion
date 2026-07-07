@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from exception.crawler_exception import CrawlerException
 from model.crawl_result import CrawlResult
+from model.news_collect_result import NewsCollectResult
 from model.news_discover_request import NewsDiscoverRequest
 from model.news_discover_result import NewsDiscoverResult
 from model.news_request import NewsCrawlRequest
@@ -35,6 +36,17 @@ def test_news_crawler(request: NewsCrawlRequest) -> CrawlResult:
 def discover_news_links(request: NewsDiscoverRequest) -> NewsDiscoverResult:
     try:
         return service.discover_news_links(str(request.url), request.limit)
+    except CrawlerException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/collect", response_model=NewsCollectResult, response_model_by_alias=True)
+def collect_news(request: NewsDiscoverRequest) -> NewsCollectResult:
+    try:
+        return service.collect_news(str(request.url), request.limit)
     except CrawlerException as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

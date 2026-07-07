@@ -46,6 +46,7 @@ CrawlerController
 GET  /api/crawler/health       检查 Spring Boot 到 Python crawler 的链路
 POST /api/crawler/news/discover 从首页/频道页发现新闻详情链接
 POST /api/crawler/news/crawl   抓取单条新闻 URL
+POST /api/crawler/news/collect 自动发现链接并批量抓取正文
 POST /api/crawler/news/test    兼容保留的测试入口
 ```
 

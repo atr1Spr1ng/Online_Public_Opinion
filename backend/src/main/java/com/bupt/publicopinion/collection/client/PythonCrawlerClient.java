@@ -4,6 +4,7 @@ import com.bupt.publicopinion.collection.dto.NewsDiscoverRequest;
 import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
 import com.bupt.publicopinion.collection.exception.CrawlerServiceException;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
+import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
 import org.springframework.stereotype.Component;
@@ -63,6 +64,25 @@ public class PythonCrawlerClient {
                     .body(request)
                     .retrieve()
                     .body(NewsDiscoverResult.class);
+
+            if (result == null) {
+                throw new CrawlerServiceException("Python 爬虫服务返回空响应");
+            }
+            return result;
+        } catch (CrawlerServiceException exception) {
+            throw exception;
+        } catch (RestClientException exception) {
+            throw new CrawlerServiceException("调用 Python 爬虫服务失败", exception);
+        }
+    }
+
+    public NewsCollectResult collectNews(NewsDiscoverRequest request) {
+        try {
+            NewsCollectResult result = crawlerRestClient.post()
+                    .uri("/internal/crawler/news/collect")
+                    .body(request)
+                    .retrieve()
+                    .body(NewsCollectResult.class);
 
             if (result == null) {
                 throw new CrawlerServiceException("Python 爬虫服务返回空响应");

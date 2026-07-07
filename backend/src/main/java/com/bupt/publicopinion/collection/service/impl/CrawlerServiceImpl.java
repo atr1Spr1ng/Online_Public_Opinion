@@ -5,6 +5,7 @@ import com.bupt.publicopinion.collection.client.PythonCrawlerClient;
 import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
 import com.bupt.publicopinion.collection.service.CrawlerService;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
+import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
 import org.springframework.stereotype.Service;
@@ -31,5 +32,10 @@ public class CrawlerServiceImpl implements CrawlerService {
     @Override
     public NewsDiscoverResult discoverNewsLinks(NewsDiscoverRequest request) {
         return pythonCrawlerClient.discoverNewsLinks(request);
+    }
+
+    @Override
+    public NewsCollectResult collectNews(NewsDiscoverRequest request) {
+        return pythonCrawlerClient.collectNews(request);
     }
 }
