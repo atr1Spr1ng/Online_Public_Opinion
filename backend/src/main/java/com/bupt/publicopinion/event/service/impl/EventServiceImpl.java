@@ -107,7 +107,6 @@ public class EventServiceImpl implements EventService {
                 eventArticleMapper.insert(ea);
             }
 
-            event.setKeywords(item.keywords() != null ? String.join(",", item.keywords()) : "");
             savedEvents.add(EventVO.from(event));
         }
 
