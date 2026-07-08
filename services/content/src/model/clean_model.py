@@ -14,4 +14,4 @@ class CleanResponse(BaseModel):
     keywords: str = ""
     summary: str = ""
     language: str = "zh"
-    status: str = "CLEANED"
+    status: str = "CLEANED"  # CLEANED | NOISY（正文<20个中文字符标记为噪音）
