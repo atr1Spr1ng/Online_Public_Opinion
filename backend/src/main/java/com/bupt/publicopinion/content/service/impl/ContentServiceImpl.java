@@ -93,14 +93,26 @@ public class ContentServiceImpl implements ContentService {
         clean.setPublishedAt(raw.getPublishedAt());
         clean.setSourceName(raw.getSourceName());
         clean.setStatus(result.status());
+
+        // ES more_like_this 内容去重
+        boolean isDuplicate = false;
+        try {
+            var similar = searchSyncService.findSimilar(result.title(), result.content(), 1);
+            isDuplicate = !similar.isEmpty();
+        } catch (Exception e) {
+            // ES 不可用时不阻断清洗流程
+        }
+
+        clean.setSimhash(isDuplicate ? -1L : 0L);
         articleCleanMapper.insert(clean);
 
-        // 同步到 Elasticsearch（失败不影响主流程）
-        try {
-            searchSyncService.indexArticle(clean);
-        } catch (Exception e) {
-            // ES 不可用时日志记录但不阻断清洗流程
-            System.err.println("[ES] 同步文章索引失败 (id=" + clean.getId() + "): " + e.getMessage());
+        // 只同步非重复文章到 ES
+        if (!isDuplicate) {
+            try {
+                searchSyncService.indexArticle(clean);
+            } catch (Exception e) {
+                System.err.println("[ES] 同步文章索引失败 (id=" + clean.getId() + "): " + e.getMessage());
+            }
         }
     }
 }
