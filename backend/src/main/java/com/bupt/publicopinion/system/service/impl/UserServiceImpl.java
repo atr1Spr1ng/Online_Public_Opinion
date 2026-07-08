@@ -1,6 +1,7 @@
 package com.bupt.publicopinion.system.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.bupt.publicopinion.common.exception.AuthenticationException;
 import com.bupt.publicopinion.common.exception.UserNotFoundException;
 import com.bupt.publicopinion.system.entity.User;
 import com.bupt.publicopinion.system.mapper.UserMapper;
@@ -57,5 +58,27 @@ public class UserServiceImpl implements UserService {
         user.setId(userId);
         user.setLastLoginAt(LocalDateTime.now());
         userMapper.updateById(user);
+    }
+
+    @Override
+    public void updateProfile(Long userId, String nickname, String email) {
+        User user = new User();
+        user.setId(userId);
+        user.setNickname(nickname);
+        user.setEmail(email);
+        user.setUpdatedAt(LocalDateTime.now());
+        userMapper.updateById(user);
+    }
+
+    @Override
+    public void changePassword(Long userId, String oldPassword, String newPassword) {
+        User user = findById(userId);
+        if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
+            throw new AuthenticationException("原密码错误");
+        }
+        User update = new User();
+        update.setId(userId);
+        update.setPassword(passwordEncoder.encode(newPassword));
+        userMapper.updateById(update);
     }
 }

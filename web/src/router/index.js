@@ -23,7 +23,9 @@ const routes = [
       { path: 'propagation/source', name: 'PropSource', component: () => import('@/views/propagation/source.vue'), meta: { title: '事件溯源', icon: 'Search' } },
       { path: 'propagation/path', name: 'PropPath', component: () => import('@/views/propagation/path.vue'), meta: { title: '传播路径', icon: 'Share' } },
       { path: 'fake', name: 'FakeDetection', component: () => import('@/views/fake/index.vue'), meta: { title: '虚假检测', icon: 'WarningFilled' } },
-      { path: 'report', name: 'Report', component: () => import('@/views/report/index.vue'), meta: { title: '舆情报告', icon: 'DataAnalysis' } }
+      { path: 'report', name: 'Report', component: () => import('@/views/report/index.vue'), meta: { title: '舆情报告', icon: 'DataAnalysis' } },
+      { path: 'user/profile', name: 'UserProfile', component: () => import('@/views/user/profile.vue'), meta: { title: '个人信息', icon: 'User' } },
+      { path: 'user/preferences', name: 'UserPreferences', component: () => import('@/views/user/preferences.vue'), meta: { title: '偏好管理', icon: 'Setting' } }
     ]
   }
 ]

@@ -54,6 +54,14 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>舆情报告</span>
         </el-menu-item>
+        <el-sub-menu index="user">
+          <template #title>
+            <el-icon><User /></el-icon>
+            <span>个人中心</span>
+          </template>
+          <el-menu-item index="/user/profile">个人信息</el-menu-item>
+          <el-menu-item index="/user/preferences">偏好管理</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
 

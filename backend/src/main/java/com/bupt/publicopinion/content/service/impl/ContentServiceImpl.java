@@ -11,6 +11,7 @@ import com.bupt.publicopinion.content.exception.ContentServiceException;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
 import com.bupt.publicopinion.content.service.ContentService;
 import com.bupt.publicopinion.content.vo.CleanResult;
+import com.bupt.publicopinion.search.service.SearchSyncService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -22,15 +23,18 @@ public class ContentServiceImpl implements ContentService {
     private final ArticleCleanMapper articleCleanMapper;
     private final ArticleRawMapper articleRawMapper;
     private final PythonContentClient pythonContentClient;
+    private final SearchSyncService searchSyncService;
 
     public ContentServiceImpl(
             ArticleCleanMapper articleCleanMapper,
             ArticleRawMapper articleRawMapper,
-            PythonContentClient pythonContentClient
+            PythonContentClient pythonContentClient,
+            SearchSyncService searchSyncService
     ) {
         this.articleCleanMapper = articleCleanMapper;
         this.articleRawMapper = articleRawMapper;
         this.pythonContentClient = pythonContentClient;
+        this.searchSyncService = searchSyncService;
     }
 
     @Override
@@ -90,5 +94,13 @@ public class ContentServiceImpl implements ContentService {
         clean.setSourceName(raw.getSourceName());
         clean.setStatus(result.status());
         articleCleanMapper.insert(clean);
+
+        // 同步到 Elasticsearch（失败不影响主流程）
+        try {
+            searchSyncService.indexArticle(clean);
+        } catch (Exception e) {
+            // ES 不可用时日志记录但不阻断清洗流程
+            System.err.println("[ES] 同步文章索引失败 (id=" + clean.getId() + "): " + e.getMessage());
+        }
     }
 }
