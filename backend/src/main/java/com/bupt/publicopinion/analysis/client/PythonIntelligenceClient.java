@@ -129,7 +129,6 @@ public class PythonIntelligenceClient {
             String featuresJson,
             String details
     ) {}
-
     @SuppressWarnings("unchecked")
     public ClusterResult clusterEvents(List<Map<String, Object>> articles, double threshold) {
         Map<String, Object> body = Map.of(
