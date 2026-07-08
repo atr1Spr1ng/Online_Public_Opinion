@@ -45,18 +45,35 @@ class NewsPleaseAdapter:
             raise CrawlerException("news-please 解析网页失败") from exc
 
         fallback_title, fallback_content = self._extract_fallback_fields(html)
+        title = article.title or fallback_title
+        content = article.maintext or fallback_content
+        content_length = len(content.strip()) if content else 0
+        extract_status, message = self._build_extract_status(content_length)
+
         return CrawlResult(
             engine="news-please",
             original_url=url,
             final_url=final_url,
             status_code=status_code,
-            title=article.title or fallback_title,
+            title=title,
             authors=list(article.authors or []),
             published_at=article.date_publish,
-            content=article.maintext or fallback_content,
+            content=content,
+            content_length=content_length,
+            extract_status=extract_status,
+            message=message,
             main_image=article.image_url,
             language=article.language,
             fetched_at=datetime.now(timezone.utc),
+        )
+
+    @staticmethod
+    def _build_extract_status(content_length: int) -> tuple[str, str]:
+        if content_length > 0:
+            return "SUCCESS", "新闻正文抽取成功"
+        return (
+            "EMPTY_CONTENT",
+            "页面访问成功，但未抽取到正文。请确认 URL 是新闻详情页；首页、列表页或 JS 动态加载页面需要后续链接发现/动态渲染能力。",
         )
 
     @staticmethod
