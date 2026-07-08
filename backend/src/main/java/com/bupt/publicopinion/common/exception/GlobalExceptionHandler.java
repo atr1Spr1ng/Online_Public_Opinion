@@ -1,5 +1,6 @@
 package com.bupt.publicopinion.common.exception;
 
+import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.collection.exception.CrawlerServiceException;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.content.exception.ContentServiceException;
@@ -24,6 +25,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ContentServiceException.class)
     public ResponseEntity<ApiResult<Void>> handleContentServiceException(
             ContentServiceException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
+    }
+
+    @ExceptionHandler(IntelligenceServiceException.class)
+    public ResponseEntity<ApiResult<Void>> handleIntelligenceServiceException(
+            IntelligenceServiceException exception
     ) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
