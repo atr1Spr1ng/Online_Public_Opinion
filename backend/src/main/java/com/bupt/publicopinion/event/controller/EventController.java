@@ -1,0 +1,36 @@
+package com.bupt.publicopinion.event.controller;
+
+import com.bupt.publicopinion.common.result.ApiResult;
+import com.bupt.publicopinion.event.dto.EventClusterRequest;
+import com.bupt.publicopinion.event.service.EventService;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/events")
+public class EventController {
+
+    private final EventService eventService;
+
+    public EventController(EventService eventService) {
+        this.eventService = eventService;
+    }
+
+    @PostMapping("/cluster")
+    public ApiResult<Map<String, Object>> cluster(@RequestBody @Valid EventClusterRequest request) {
+        return ApiResult.success(eventService.clusterAndSave(request.threshold()));
+    }
+
+    @GetMapping
+    public ApiResult<?> list(@RequestParam(defaultValue = "1") long pageNum,
+                              @RequestParam(defaultValue = "10") long pageSize) {
+        return ApiResult.success(eventService.listEvents(pageNum, pageSize));
+    }
+
+    @GetMapping("/{id}")
+    public ApiResult<?> detail(@PathVariable Long id) {
+        return ApiResult.success(eventService.getEvent(id));
+    }
+}

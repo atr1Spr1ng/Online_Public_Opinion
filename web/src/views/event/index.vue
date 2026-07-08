@@ -1,7 +1,15 @@
 <template>
   <div>
     <el-card>
-      <template #header><span>舆情事件管理</span></template>
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>舆情事件管理</span>
+          <el-button type="primary" @click="showClusterDialog" :loading="clustering">
+            <el-icon><DataAnalysis /></el-icon>
+            执行聚类分析
+          </el-button>
+        </div>
+      </template>
       <el-table :data="tableData" v-loading="loading" border stripe>
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="title" label="事件标题" min-width="200" show-overflow-tooltip />
@@ -22,7 +30,33 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <el-pagination
+        v-if="total > 0"
+        style="margin-top:16px;justify-content:flex-end"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+        v-model:current-page="pageNum"
+        @current-change="fetchData"
+      />
     </el-card>
+
+    <el-dialog v-model="clusterVisible" title="事件聚类" width="420px">
+      <el-form label-width="100px">
+        <el-form-item label="相似度阈值">
+          <el-slider v-model="threshold" :min="0.05" :max="0.95" :step="0.05" show-input />
+        </el-form-item>
+        <el-form-item label="说明">
+          <span style="color:#909399;font-size:13px">阈值越低，事件归类越宽松；阈值越高，归类越严格。</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="clusterVisible = false">取消</el-button>
+        <el-button type="primary" @click="doCluster" :loading="clustering">开始聚类</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="sourceVisible" title="事件溯源结果" width="600px">
       <el-descriptions v-if="sourceResult" :column="2" border>
@@ -58,37 +92,73 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { listEvents, clusterEvents } from '@/api/event'
 import { traceSource, analyzePropagation } from '@/api/propagation'
 import { generateReport } from '@/api/report'
 import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
 const tableData = ref([])
+const total = ref(0)
+const pageNum = ref(1)
+const pageSize = ref(10)
+
+const clustering = ref(false)
+const clusterVisible = ref(false)
+const threshold = ref(0.25)
+
 const sourceVisible = ref(false)
 const sourceResult = ref(null)
 const pathVisible = ref(false)
 const pathResult = ref(null)
 
 function lifecycleType(lc) {
-  const map = { '潜伏期': 'info', '成长期': 'warning', '高峰期': 'danger', '衰退期': 'info' }
+  const map = { '潜伏期': 'info', '成长期': 'warning', '高潮期': 'danger', '衰退期': 'info' }
   return map[lc] || 'info'
 }
 
 async function fetchData() {
   loading.value = true
   try {
-    // Event data via direct axios (no dedicated event list API, use propagation/event endpoint pattern)
-    // Actually read from the backend - let's use the crawler tasks approach
-    const token = localStorage.getItem('token')
-    const res = await axios.get('/api/propagation/event/1', { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: { data: null } }))
-    // Fallback: display what we can
-    tableData.value = [
-      { id: 1, title: '油价上涨事件', keywords: '油价,上涨,汽油,柴油,能源', articleCount: 1, hotness: 5.0, lifecycle: '成长期', startTime: '2026-07-07' },
-      { id: 2, title: '油价上涨事件', keywords: '油价,上涨,汽油,柴油,能源', articleCount: 1, hotness: 5.0, lifecycle: '成长期', startTime: '2026-07-07' }
-    ]
-  } catch (e) { /* ignore */ }
-  finally { loading.value = false }
+    const res = await listEvents({ pageNum: pageNum.value, pageSize: pageSize.value })
+    if (res.code === 200) {
+      const data = res.data
+      tableData.value = data.records || data || []
+      total.value = data.total || 0
+    }
+  } catch (e) {
+    ElMessage.error('加载事件列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function showClusterDialog() {
+  threshold.value = 0.25
+  clusterVisible.value = true
+}
+
+async function doCluster() {
+  clustering.value = true
+  try {
+    const res = await clusterEvents({ threshold: threshold.value })
+    if (res.code === 200 && res.data?.success) {
+      const data = res.data
+      ElMessage.success(
+        `聚类完成：${data.events?.length || 0} 个事件，` +
+        `覆盖 ${data.clusteredArticles} 篇文章，` +
+        `${data.unclusteredArticles} 篇未归类`
+      )
+      clusterVisible.value = false
+      await fetchData()
+    } else {
+      ElMessage.error(res.data?.message || '聚类失败')
+    }
+  } catch (e) {
+    ElMessage.error('聚类请求失败: ' + e.message)
+  } finally {
+    clustering.value = false
+  }
 }
 
 async function doTraceSource(row) {

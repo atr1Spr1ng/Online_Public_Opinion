@@ -8,6 +8,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -127,5 +128,84 @@ public class PythonIntelligenceClient {
             String detectionMethod,
             String featuresJson,
             String details
+    ) {}
+
+    @SuppressWarnings("unchecked")
+    public ClusterResult clusterEvents(List<Map<String, Object>> articles, double threshold) {
+        Map<String, Object> body = Map.of(
+                "articles", articles,
+                "threshold", threshold
+        );
+
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/event/cluster")
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                throw new IntelligenceServiceException("Python 事件聚类服务返回空响应");
+            }
+
+            int totalArticles = toInt(result.get("total_articles"));
+            int clusteredArticles = toInt(result.get("clustered_articles"));
+            int unclusteredArticles = toInt(result.get("unclustered_articles"));
+
+            List<Map<String, Object>> events = (List<Map<String, Object>>) result.get("events");
+            List<EventClusterItem> items = new ArrayList<>();
+            if (events != null) {
+                for (Map<String, Object> e : events) {
+                    items.add(new EventClusterItem(
+                            e.get("title").toString(),
+                            (List<String>) e.get("keywords"),
+                            toLongList((List<?>) e.get("article_ids")),
+                            toInt(e.get("article_count")),
+                            toDouble(e.get("hotness")),
+                            e.get("lifecycle") != null ? e.get("lifecycle").toString() : "潜伏期",
+                            e.get("start_time") != null ? e.get("start_time").toString() : "",
+                            e.get("end_time") != null ? e.get("end_time").toString() : ""
+                    ));
+                }
+            }
+
+            return new ClusterResult(items, totalArticles, clusteredArticles, unclusteredArticles);
+
+        } catch (IntelligenceServiceException e) {
+            throw e;
+        } catch (RestClientException e) {
+            throw new IntelligenceServiceException("调用 Python 事件聚类服务失败", e);
+        }
+    }
+
+    private int toInt(Object value) {
+        if (value instanceof Number num) return num.intValue();
+        return 0;
+    }
+
+    private List<Long> toLongList(List<?> list) {
+        if (list == null) return List.of();
+        return list.stream()
+                .filter(Number.class::isInstance)
+                .map(o -> ((Number) o).longValue())
+                .toList();
+    }
+
+    public record EventClusterItem(
+            String title,
+            List<String> keywords,
+            List<Long> articleIds,
+            int articleCount,
+            double hotness,
+            String lifecycle,
+            String startTime,
+            String endTime
+    ) {}
+
+    public record ClusterResult(
+            List<EventClusterItem> events,
+            int totalArticles,
+            int clusteredArticles,
+            int unclusteredArticles
     ) {}
 }
