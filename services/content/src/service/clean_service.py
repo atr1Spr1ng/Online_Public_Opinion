@@ -3,6 +3,8 @@ import re
 import jieba
 import jieba.analyse
 from bs4 import BeautifulSoup
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from src.model.clean_model import CleanRequest, CleanResponse
 
@@ -43,6 +45,31 @@ class CleanService:
             language=request.language or "zh",
             status=status
         )
+
+    def vectorize(self, texts: list[str]) -> tuple[list[list[float]], int]:
+        """对文本列表进行 TF-IDF 向量化，返回 (向量列表, 词汇表大小)"""
+        if not texts:
+            return [], 0
+
+        def tokenizer(text: str) -> list[str]:
+            text = self._strip_html(text)
+            text = self._normalize(text)
+            text = self._clean_special_chars(text)
+            words = jieba.cut(text)
+            return [w for w in words if len(w.strip()) > 1 and w.strip() not in self._stopwords]
+
+        vectorizer = TfidfVectorizer(
+            tokenizer=tokenizer,
+            token_pattern=None,  # 使用自定义 tokenizer
+            max_features=5000,
+            sublinear_tf=True,
+        )
+        tfidf_matrix = vectorizer.fit_transform(texts)
+        vocab_size = len(vectorizer.vocabulary_)
+
+        # 稀疏矩阵 → 稠密列表（每篇文档的向量）
+        vectors = tfidf_matrix.toarray().tolist()
+        return vectors, vocab_size
 
     def _load_stopwords(self) -> set[str]:
         path = self._stopwords_path()

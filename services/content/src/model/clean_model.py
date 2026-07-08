@@ -14,4 +14,13 @@ class CleanResponse(BaseModel):
     keywords: str = ""
     summary: str = ""
     language: str = "zh"
-    status: str = "CLEANED"  # CLEANED | NOISY（正文<20个中文字符标记为噪音）
+    status: str = "CLEANED"  # CLEANED | NOISY
+
+
+class VectorizeRequest(BaseModel):
+    texts: list[str]
+
+
+class VectorizeResponse(BaseModel):
+    vectors: list[list[float]]
+    vocab_size: int
