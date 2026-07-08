@@ -157,14 +157,14 @@ public class PythonIntelligenceClient {
             if (events != null) {
                 for (Map<String, Object> e : events) {
                     items.add(new EventClusterItem(
-                            e.get("title").toString(),
-                            (List<String>) e.get("keywords"),
-                            toLongList((List<?>) e.get("article_ids")),
+                            safeString(e.get("title"), "未命名事件"),
+                            safeStringList(e.get("keywords")),
+                            toLongList(e.get("article_ids")),
                             toInt(e.get("article_count")),
                             toDouble(e.get("hotness")),
-                            e.get("lifecycle") != null ? e.get("lifecycle").toString() : "潜伏期",
-                            e.get("start_time") != null ? e.get("start_time").toString() : "",
-                            e.get("end_time") != null ? e.get("end_time").toString() : ""
+                            safeString(e.get("lifecycle"), "潜伏期"),
+                            safeString(e.get("start_time"), ""),
+                            safeString(e.get("end_time"), "")
                     ));
                 }
             }
@@ -183,12 +183,30 @@ public class PythonIntelligenceClient {
         return 0;
     }
 
-    private List<Long> toLongList(List<?> list) {
-        if (list == null) return List.of();
-        return list.stream()
-                .filter(Number.class::isInstance)
-                .map(o -> ((Number) o).longValue())
-                .toList();
+    private String safeString(Object value, String defaultValue) {
+        if (value == null) return defaultValue;
+        return value.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> safeStringList(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(Object::toString)
+                    .toList();
+        }
+        return List.of();
+    }
+
+    private List<Long> toLongList(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .filter(Number.class::isInstance)
+                    .map(o -> ((Number) o).longValue())
+                    .toList();
+        }
+        return List.of();
     }
 
     public record EventClusterItem(

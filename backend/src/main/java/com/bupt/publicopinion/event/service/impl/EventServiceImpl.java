@@ -4,17 +4,19 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
 import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
 import com.bupt.publicopinion.event.entity.Event;
 import com.bupt.publicopinion.event.entity.EventArticle;
+import com.bupt.publicopinion.event.exception.EventNotFoundException;
 import com.bupt.publicopinion.event.mapper.EventArticleMapper;
 import com.bupt.publicopinion.event.mapper.EventMapper;
-import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.event.service.EventService;
 import com.bupt.publicopinion.event.vo.EventDetailVO;
 import com.bupt.publicopinion.event.vo.EventVO;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -23,9 +25,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class EventServiceImpl implements EventService {
+
+    private static final int MAX_ARTICLES_FOR_CLUSTERING = 5000;
 
     private final EventMapper eventMapper;
     private final EventArticleMapper eventArticleMapper;
@@ -45,11 +51,14 @@ public class EventServiceImpl implements EventService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> clusterAndSave(double threshold) {
+        // 1. 取文章，限流
         List<ArticleClean> articles = articleCleanMapper.selectList(
                 new LambdaQueryWrapper<ArticleClean>()
                         .isNotNull(ArticleClean::getKeywords)
                         .ne(ArticleClean::getKeywords, "")
+                        .last("LIMIT " + MAX_ARTICLES_FOR_CLUSTERING)
         );
 
         List<Map<String, Object>> articleItems = new ArrayList<>();
@@ -63,6 +72,7 @@ public class EventServiceImpl implements EventService {
             articleItems.add(item);
         }
 
+        // 2. 调 Python 聚类
         PythonIntelligenceClient.ClusterResult result;
         try {
             result = pythonIntelligenceClient.clusterEvents(articleItems, threshold);
@@ -74,6 +84,16 @@ public class EventServiceImpl implements EventService {
             return errorResult;
         }
 
+        // 3. 清除旧事件（幂等）
+        eventArticleMapper.delete(new LambdaQueryWrapper<>());
+        eventMapper.delete(new LambdaQueryWrapper<>());
+
+        // 4. 收集所有有效 cleanId
+        Set<Long> validCleanIds = articles.stream()
+                .map(ArticleClean::getId)
+                .collect(Collectors.toSet());
+
+        // 5. 写入新事件
         List<EventVO> savedEvents = new ArrayList<>();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -101,6 +121,7 @@ public class EventServiceImpl implements EventService {
             eventMapper.insert(event);
 
             for (Long cleanId : item.articleIds()) {
+                if (!validCleanIds.contains(cleanId)) continue;
                 EventArticle ea = new EventArticle();
                 ea.setEventId(event.getId());
                 ea.setCleanId(cleanId);
@@ -133,7 +154,7 @@ public class EventServiceImpl implements EventService {
     public EventDetailVO getEvent(Long id) {
         Event event = eventMapper.selectById(id);
         if (event == null) {
-            throw new IntelligenceServiceException("事件不存在: " + id);
+            throw new EventNotFoundException("事件不存在: " + id);
         }
 
         List<Long> articleIds = eventArticleMapper.selectList(
