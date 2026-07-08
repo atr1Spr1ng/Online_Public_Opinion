@@ -4,6 +4,7 @@ import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.collection.exception.CrawlerServiceException;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.content.exception.ContentServiceException;
+import com.bupt.publicopinion.report.exception.ReportServiceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -33,6 +34,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IntelligenceServiceException.class)
     public ResponseEntity<ApiResult<Void>> handleIntelligenceServiceException(
             IntelligenceServiceException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
+    }
+
+    @ExceptionHandler(ReportServiceException.class)
+    public ResponseEntity<ApiResult<Void>> handleReportServiceException(
+            ReportServiceException exception
     ) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));

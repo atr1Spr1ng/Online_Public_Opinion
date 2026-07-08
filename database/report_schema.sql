@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS report (
+    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_id     BIGINT       NOT NULL COMMENT 'event.id',
+    title        VARCHAR(256) NOT NULL COMMENT '报告标题',
+    content_json LONGTEXT     DEFAULT NULL COMMENT '报告详情JSON',
+    create_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_event_id (event_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='舆情分析报告表';
