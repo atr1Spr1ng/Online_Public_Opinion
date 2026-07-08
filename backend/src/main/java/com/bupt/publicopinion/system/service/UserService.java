@@ -21,7 +21,16 @@ public interface UserService {
 
     /**
      * 更新最后登录时间。
-     * 扩展点：当前仅预留接口，AuthController 中暂不调用。
      */
     void updateLastLogin(Long userId);
+
+    /**
+     * 更新个人信息（昵称、邮箱）。
+     */
+    void updateProfile(Long userId, String nickname, String email);
+
+    /**
+     * 修改密码。
+     */
+    void changePassword(Long userId, String oldPassword, String newPassword);
 }
