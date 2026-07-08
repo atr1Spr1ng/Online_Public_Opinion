@@ -4,6 +4,8 @@ import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.collection.exception.CrawlerServiceException;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.content.exception.ContentServiceException;
+import com.bupt.publicopinion.fake.exception.FakeDetectionException;
+import com.bupt.publicopinion.event.exception.EventNotFoundException;
 import com.bupt.publicopinion.report.exception.ReportServiceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +28,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ContentServiceException.class)
     public ResponseEntity<ApiResult<Void>> handleContentServiceException(
             ContentServiceException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
+    }
+
+    @ExceptionHandler(FakeDetectionException.class)
+    public ResponseEntity<ApiResult<Void>> handleFakeDetectionException(
+            FakeDetectionException exception
     ) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
@@ -90,6 +100,14 @@ public class GlobalExceptionHandler {
         exception.printStackTrace();
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResult.error(HttpStatus.INTERNAL_SERVER_ERROR.value(), "服务器内部错误"));
+    }
+
+    @ExceptionHandler(EventNotFoundException.class)
+    public ResponseEntity<ApiResult<Void>> handleEventNotFoundException(
+            EventNotFoundException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResult.error(HttpStatus.NOT_FOUND.value(), exception.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

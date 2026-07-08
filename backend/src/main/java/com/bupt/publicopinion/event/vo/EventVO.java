@@ -1,0 +1,32 @@
+package com.bupt.publicopinion.event.vo;
+
+import com.bupt.publicopinion.event.entity.Event;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+public record EventVO(
+        Long id,
+        String title,
+        String keywords,
+        Integer articleCount,
+        BigDecimal hotness,
+        String lifecycle,
+        LocalDateTime startTime,
+        LocalDateTime endTime,
+        LocalDateTime createTime
+) {
+    public static EventVO from(Event event) {
+        return new EventVO(
+                event.getId(),
+                event.getTitle(),
+                event.getKeywords(),
+                event.getArticleCount(),
+                event.getHotness(),
+                event.getLifecycle(),
+                event.getStartTime(),
+                event.getEndTime(),
+                event.getCreateTime()
+        );
+    }
+}
