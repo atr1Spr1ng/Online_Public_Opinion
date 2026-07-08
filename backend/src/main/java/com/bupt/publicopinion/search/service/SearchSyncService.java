@@ -1,5 +1,6 @@
 package com.bupt.publicopinion.search.service;
 
+import co.elastic.clients.elasticsearch._types.query_dsl.Like;
 import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.search.document.ArticleDocument;
@@ -130,6 +131,32 @@ public class SearchSyncService {
         return new org.springframework.data.domain.PageImpl<>(
                 results, PageRequest.of(pageNum - 1, pageSize), hits.getTotalHits()
         );
+    }
+
+    /**
+     * 用 ES more_like_this 查找相似文章（内容去重）
+     */
+    public List<ArticleDocument> findSimilar(String title, String content, int maxResults) {
+        String text = (title != null ? title : "") + " " + (content != null ? content : "");
+        if (text.isBlank()) return List.of();
+
+        NativeQuery query = NativeQuery.builder()
+                .withQuery(q -> q
+                        .moreLikeThis(mlt -> mlt
+                                .fields("title", "content")
+                                .like(List.of(Like.of(l -> l.text(text))))
+                                .minTermFreq(1)
+                                .minDocFreq(1)
+                                .maxQueryTerms(12)
+                        )
+                )
+                .withMaxResults(maxResults)
+                .build();
+
+        SearchHits<ArticleDocument> hits = elasticsearchOperations.search(query, ArticleDocument.class);
+        return hits.getSearchHits().stream()
+                .map(h -> h.getContent())
+                .toList();
     }
 
     /**
