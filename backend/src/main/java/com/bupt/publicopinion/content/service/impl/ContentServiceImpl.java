@@ -105,14 +105,5 @@ public class ContentServiceImpl implements ContentService {
 
         clean.setSimhash(isDuplicate ? -1L : 0L);
         articleCleanMapper.insert(clean);
-
-        // 只同步非重复文章到 ES
-        if (!isDuplicate) {
-            try {
-                searchSyncService.indexArticle(clean);
-            } catch (Exception e) {
-                System.err.println("[ES] 同步文章索引失败 (id=" + clean.getId() + "): " + e.getMessage());
-            }
-        }
     }
 }

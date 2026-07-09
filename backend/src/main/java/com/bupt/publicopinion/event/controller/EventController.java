@@ -2,6 +2,7 @@ package com.bupt.publicopinion.event.controller;
 
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.event.dto.EventClusterRequest;
+import com.bupt.publicopinion.event.dto.SimilarEventRequest;
 import com.bupt.publicopinion.event.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +28,18 @@ public class EventController {
     public ApiResult<?> list(@RequestParam(defaultValue = "1") long pageNum,
                               @RequestParam(defaultValue = "10") long pageSize) {
         return ApiResult.success(eventService.listEvents(pageNum, pageSize));
+    }
+
+    @GetMapping("/search")
+    public ApiResult<?> search(@RequestParam(defaultValue = "") String keyword,
+                                @RequestParam(defaultValue = "1") long pageNum,
+                                @RequestParam(defaultValue = "10") long pageSize) {
+        return ApiResult.success(eventService.searchEvents(keyword, pageNum, pageSize));
+    }
+
+    @PostMapping("/similar")
+    public ApiResult<?> findSimilar(@RequestBody @Valid SimilarEventRequest request) {
+        return ApiResult.success(eventService.findSimilarEvents(request.keywords(), request.topK()));
     }
 
     @GetMapping("/{id}")

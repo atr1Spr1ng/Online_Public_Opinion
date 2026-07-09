@@ -7,7 +7,7 @@ import org.springframework.data.elasticsearch.annotations.FieldType;
 
 import java.time.LocalDateTime;
 
-@Document(indexName = "article_clean")
+@Document(indexName = "article_clean", createIndex = false)
 public class ArticleDocument {
 
     @Id

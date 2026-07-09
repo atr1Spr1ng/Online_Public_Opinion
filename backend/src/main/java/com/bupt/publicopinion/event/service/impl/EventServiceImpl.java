@@ -15,6 +15,10 @@ import com.bupt.publicopinion.event.mapper.EventMapper;
 import com.bupt.publicopinion.event.service.EventService;
 import com.bupt.publicopinion.event.vo.EventDetailVO;
 import com.bupt.publicopinion.event.vo.EventVO;
+import com.bupt.publicopinion.event.vo.SimilarEventResult;
+import com.bupt.publicopinion.search.document.EventDocument;
+import com.bupt.publicopinion.search.document.EventSimilarHit;
+import com.bupt.publicopinion.search.service.SearchSyncService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,17 +41,20 @@ public class EventServiceImpl implements EventService {
     private final EventArticleMapper eventArticleMapper;
     private final ArticleCleanMapper articleCleanMapper;
     private final PythonIntelligenceClient pythonIntelligenceClient;
+    private final SearchSyncService searchSyncService;
 
     public EventServiceImpl(
             EventMapper eventMapper,
             EventArticleMapper eventArticleMapper,
             ArticleCleanMapper articleCleanMapper,
-            PythonIntelligenceClient pythonIntelligenceClient
+            PythonIntelligenceClient pythonIntelligenceClient,
+            SearchSyncService searchSyncService
     ) {
         this.eventMapper = eventMapper;
         this.eventArticleMapper = eventArticleMapper;
         this.articleCleanMapper = articleCleanMapper;
         this.pythonIntelligenceClient = pythonIntelligenceClient;
+        this.searchSyncService = searchSyncService;
     }
 
     @Override
@@ -87,6 +94,7 @@ public class EventServiceImpl implements EventService {
         // 3. 清除旧事件（幂等）
         eventArticleMapper.delete(new LambdaQueryWrapper<>());
         eventMapper.delete(new LambdaQueryWrapper<>());
+        searchSyncService.deleteAllEvents();
 
         // 4. 收集所有有效 cleanId
         Set<Long> validCleanIds = articles.stream()
@@ -165,5 +173,33 @@ public class EventServiceImpl implements EventService {
                 .toList();
 
         return EventDetailVO.from(event, articleIds);
+    }
+
+    @Override
+    public PageResult<EventVO> searchEvents(String keyword, long pageNum, long pageSize) {
+        org.springframework.data.domain.Page<EventDocument> page =
+                searchSyncService.searchEvents(keyword, (int) pageNum, (int) pageSize);
+        List<EventVO> records = page.getContent().stream()
+                .map(doc -> new EventVO(
+                        doc.getId(),
+                        doc.getTitle(),
+                        doc.getKeywords(),
+                        doc.getArticleCount(),
+                        doc.getHotness() != null ? java.math.BigDecimal.valueOf(doc.getHotness()) : null,
+                        doc.getLifecycle(),
+                        doc.getStartTime(),
+                        doc.getEndTime(),
+                        doc.getCreateTime()
+                ))
+                .toList();
+        return new PageResult<>(records, page.getTotalElements(), pageNum, pageSize);
+    }
+
+    @Override
+    public List<SimilarEventResult> findSimilarEvents(String keywords, int topK) {
+        List<EventSimilarHit> hits = searchSyncService.findSimilarEvents(keywords, topK);
+        return hits.stream()
+                .map(h -> SimilarEventResult.from(h.document(), h.score()))
+                .toList();
     }
 }

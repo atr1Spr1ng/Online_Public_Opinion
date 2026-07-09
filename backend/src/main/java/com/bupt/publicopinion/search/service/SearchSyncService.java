@@ -3,14 +3,16 @@ package com.bupt.publicopinion.search.service;
 import co.elastic.clients.elasticsearch._types.query_dsl.Like;
 import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
 import com.bupt.publicopinion.content.entity.ArticleClean;
+import com.bupt.publicopinion.event.entity.Event;
 import com.bupt.publicopinion.search.document.ArticleDocument;
+import com.bupt.publicopinion.search.document.EventDocument;
+import com.bupt.publicopinion.search.document.EventSimilarHit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHits;
-import org.springframework.data.elasticsearch.core.query.Criteria;
-import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
+import org.springframework.data.elasticsearch.core.query.DeleteQuery;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -171,6 +173,115 @@ public class SearchSyncService {
             elasticsearchOperations.save(docs);
         }
     }
+
+    // ==================== 事件索引方法 ====================
+
+    /**
+     * 将单个事件同步到 ES
+     */
+    public void indexEvent(Event event) {
+        EventDocument doc = toEventDocument(event);
+        elasticsearchOperations.save(doc);
+    }
+
+    /**
+     * 批量同步事件到 ES
+     */
+    public void indexEvents(List<Event> events) {
+        List<EventDocument> docs = events.stream().map(this::toEventDocument).toList();
+        elasticsearchOperations.save(docs);
+    }
+
+    /**
+     * 按关键词检索历史事件（ES multi_match）
+     */
+    public Page<EventDocument> searchEvents(String keyword, int pageNum, int pageSize) {
+        if (keyword == null || keyword.isBlank()) {
+            NativeQuery query = NativeQuery.builder()
+                    .withQuery(q -> q.matchAll(m -> m))
+                    .withPageable(PageRequest.of(pageNum - 1, pageSize))
+                    .build();
+            SearchHits<EventDocument> hits = elasticsearchOperations.search(query, EventDocument.class);
+            List<EventDocument> results = hits.getSearchHits().stream()
+                    .map(h -> h.getContent())
+                    .toList();
+            return new org.springframework.data.domain.PageImpl<>(
+                    results, PageRequest.of(pageNum - 1, pageSize), hits.getTotalHits()
+            );
+        }
+
+        NativeQuery query = NativeQuery.builder()
+                .withQuery(q -> q
+                        .multiMatch(mm -> mm
+                                .fields("title", "keywords")
+                                .query(keyword)
+                                .type(TextQueryType.BestFields)
+                        )
+                )
+                .withPageable(PageRequest.of(pageNum - 1, pageSize))
+                .build();
+
+        SearchHits<EventDocument> hits = elasticsearchOperations.search(query, EventDocument.class);
+        List<EventDocument> results = hits.getSearchHits().stream()
+                .map(h -> h.getContent())
+                .toList();
+        return new org.springframework.data.domain.PageImpl<>(
+                results, PageRequest.of(pageNum - 1, pageSize), hits.getTotalHits()
+        );
+    }
+
+    /**
+     * 用 ES more_like_this 查找相似事件，返回文档 + 相似度分数
+     */
+    public List<EventSimilarHit> findSimilarEvents(String keywords, int topK) {
+        NativeQuery query = NativeQuery.builder()
+                .withQuery(q -> q
+                        .moreLikeThis(mlt -> mlt
+                                .fields("title", "keywords")
+                                .like(List.of(Like.of(l -> l.text(keywords))))
+                                .minTermFreq(1)
+                                .minDocFreq(1)
+                                .maxQueryTerms(12)
+                        )
+                )
+                .withMaxResults(topK)
+                .build();
+
+        SearchHits<EventDocument> hits = elasticsearchOperations.search(query, EventDocument.class);
+        return hits.getSearchHits().stream()
+                .map(h -> new EventSimilarHit(h.getContent(), h.getScore()))
+                .toList();
+    }
+
+    /**
+     * 删除所有事件文档（聚类重建前调用，避免 ES 孤儿文档）
+     */
+    public void deleteAllEvents() {
+        elasticsearchOperations.delete(
+                DeleteQuery.builder(
+                        NativeQuery.builder()
+                                .withQuery(q -> q.matchAll(m -> m))
+                                .build()
+                ).build(),
+                EventDocument.class
+        );
+    }
+
+    private EventDocument toEventDocument(Event event) {
+        EventDocument doc = new EventDocument();
+        doc.setId(event.getId());
+        doc.setTitle(event.getTitle());
+        doc.setKeywords(event.getKeywords());
+        doc.setArticleCount(event.getArticleCount());
+        doc.setHotness(event.getHotness() != null ? event.getHotness().floatValue() : null);
+        doc.setLifecycle(event.getLifecycle());
+        doc.setStartTime(event.getStartTime());
+        doc.setEndTime(event.getEndTime());
+        doc.setCreateTime(event.getCreateTime());
+        return doc;
+    }
+
+    // ==================== 文章索引方法 ====================
 
     private ArticleDocument toDocument(ArticleClean article) {
         ArticleDocument doc = new ArticleDocument();
