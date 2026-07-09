@@ -10,10 +10,21 @@
           </el-button>
         </div>
       </template>
+      <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center">
+        <span style="font-size:14px;color:#606266">分类筛选：</span>
+        <el-select v-model="filterCategory" placeholder="全部" clearable style="width:160px" @change="onCategoryChange">
+          <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
+        </el-select>
+      </div>
       <el-table :data="tableData" v-loading="loading" border stripe>
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="title" label="事件标题" min-width="200" show-overflow-tooltip />
         <el-table-column prop="keywords" label="关键词" width="200" show-overflow-tooltip />
+        <el-table-column prop="category" label="分类" width="90">
+          <template #default="{ row }">
+            <el-tag :type="categoryType(row.category)" size="small">{{ row.category || '其他' }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="articleCount" label="文章数" width="80" />
         <el-table-column prop="hotness" label="热度" width="80" />
         <el-table-column prop="lifecycle" label="生命周期" width="100">
@@ -107,6 +118,9 @@ const clustering = ref(false)
 const clusterVisible = ref(false)
 const threshold = ref(0.25)
 
+const filterCategory = ref('')
+const categories = ['社会民生', '科技经济', '教育文化', '医疗卫生', '政治法律', '生态环境', '娱乐体育', '国际时政', '其他']
+
 const sourceVisible = ref(false)
 const sourceResult = ref(null)
 const pathVisible = ref(false)
@@ -117,10 +131,26 @@ function lifecycleType(lc) {
   return map[lc] || 'info'
 }
 
+function categoryType(cat) {
+  const map = {
+    '社会民生': 'primary', '科技经济': 'success', '教育文化': 'info',
+    '医疗卫生': 'danger', '政治法律': 'warning', '生态环境': '',
+    '娱乐体育': '', '国际时政': 'danger', '其他': 'info'
+  }
+  return map[cat] || 'info'
+}
+
+function onCategoryChange() {
+  pageNum.value = 1
+  fetchData()
+}
+
 async function fetchData() {
   loading.value = true
   try {
-    const res = await listEvents({ pageNum: pageNum.value, pageSize: pageSize.value })
+    const params = { pageNum: pageNum.value, pageSize: pageSize.value }
+    if (filterCategory.value) params.category = filterCategory.value
+    const res = await listEvents(params)
     if (res.code === 200) {
       const data = res.data
       tableData.value = data.records || data || []

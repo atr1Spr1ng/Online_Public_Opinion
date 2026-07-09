@@ -225,4 +225,35 @@ public class PythonIntelligenceClient {
             int clusteredArticles,
             int unclusteredArticles
     ) {}
+
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> classifyTopics(List<Map<String, Object>> events) {
+        Map<String, Object> body = Map.of("events", events);
+
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/topic/classify")
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                throw new IntelligenceServiceException("Python 主题分类服务返回空响应");
+            }
+
+            Object eventsObj = result.get("events");
+            if (eventsObj instanceof List<?> list) {
+                return list.stream()
+                        .filter(Map.class::isInstance)
+                        .map(o -> (Map<String, Object>) o)
+                        .toList();
+            }
+            return events;
+
+        } catch (IntelligenceServiceException e) {
+            throw e;
+        } catch (RestClientException e) {
+            throw new IntelligenceServiceException("调用 Python 主题分类服务失败", e);
+        }
+    }
 }

@@ -93,17 +93,47 @@ public class EventServiceImpl implements EventService {
                 .map(ArticleClean::getId)
                 .collect(Collectors.toSet());
 
-        // 5. 写入新事件
+        // 5. 分类（LDA + 关键词词典）
+        Map<Long, String> categoryMap = new HashMap<>();
+        if (!result.events().isEmpty()) {
+            try {
+                List<Map<String, Object>> eventItems = new ArrayList<>();
+                for (int i = 0; i < result.events().size(); i++) {
+                    var item = result.events().get(i);
+                    Map<String, Object> ei = new HashMap<>();
+                    ei.put("event_id", i);
+                    ei.put("title", item.title());
+                    ei.put("keywords", item.keywords());
+                    ei.put("article_count", item.articleCount());
+                    ei.put("hotness", item.hotness());
+                    eventItems.add(ei);
+                }
+                List<Map<String, Object>> classified = pythonIntelligenceClient.classifyTopics(eventItems);
+                for (Map<String, Object> ce : classified) {
+                    int idx = ((Number) ce.get("event_id")).intValue();
+                    String cat = (String) ce.get("category");
+                    if (idx < result.events().size()) {
+                        categoryMap.put((long) idx, cat != null ? cat : "其他");
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[Topic] 主题分类失败: " + e.getMessage());
+            }
+        }
+
+        // 6. 写入新事件
         List<EventVO> savedEvents = new ArrayList<>();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-        for (PythonIntelligenceClient.EventClusterItem item : result.events()) {
+        for (int i = 0; i < result.events().size(); i++) {
+            PythonIntelligenceClient.EventClusterItem item = result.events().get(i);
             Event event = new Event();
             event.setTitle(item.title());
             event.setKeywords(String.join(",", item.keywords()));
             event.setArticleCount(item.articleCount());
             event.setHotness(BigDecimal.valueOf(item.hotness()));
             event.setLifecycle(item.lifecycle());
+            event.setCategory(categoryMap.getOrDefault((long) i, "其他"));
 
             if (!item.startTime().isEmpty()) {
                 try {
@@ -141,9 +171,10 @@ public class EventServiceImpl implements EventService {
     }
 
     @Override
-    public PageResult<EventVO> listEvents(long pageNum, long pageSize) {
+    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category) {
         Page<Event> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
+                .eq(category != null && !category.isBlank(), Event::getCategory, category)
                 .orderByDesc(Event::getHotness);
         Page<Event> result = eventMapper.selectPage(page, wrapper);
         List<EventVO> records = result.getRecords().stream().map(EventVO::from).toList();

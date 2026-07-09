@@ -17,6 +17,7 @@ public class Event {
     private Integer articleCount;
     private BigDecimal hotness;
     private String lifecycle;
+    private String category;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private LocalDateTime createTime;
@@ -39,6 +40,8 @@ public class Event {
 
     public String getLifecycle() { return lifecycle; }
     public void setLifecycle(String lifecycle) { this.lifecycle = lifecycle; }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
 
     public LocalDateTime getStartTime() { return startTime; }
     public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }
