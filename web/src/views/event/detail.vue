@@ -41,20 +41,27 @@
         </el-col>
       </el-row>
 
-      <!-- 第二行：情感分布 + 平台分布 -->
+      <!-- 第二行：情感分布 + 词云 + 平台分布 -->
       <el-row :gutter="16" style="margin-bottom:16px">
-        <el-col :span="12">
+        <el-col :span="8">
           <el-card shadow="never">
             <template #header><span style="font-weight:600">情感分布</span></template>
             <div v-if="data.sentiment?.total === 0" style="text-align:center;padding:40px;color:#909399">暂无情感分析数据</div>
-            <div v-else ref="sentimentChartRef" style="width:100%;height:280px"></div>
+            <div v-else ref="sentimentChartRef" style="width:100%;height:260px"></div>
           </el-card>
         </el-col>
-        <el-col :span="12">
+        <el-col :span="8">
+          <el-card shadow="never">
+            <template #header><span style="font-weight:600">高频词云</span></template>
+            <div v-if="!data.topKeywords?.length" style="text-align:center;padding:40px;color:#909399">暂无词频数据</div>
+            <div v-else ref="wordCloudChartRef" style="width:100%;height:260px"></div>
+          </el-card>
+        </el-col>
+        <el-col :span="8">
           <el-card shadow="never">
             <template #header><span style="font-weight:600">平台分布</span></template>
             <div v-if="!data.sourceDistribution?.length" style="text-align:center;padding:40px;color:#909399">暂无平台数据</div>
-            <div v-else ref="sourceChartRef" style="width:100%;height:280px"></div>
+            <div v-else ref="sourceChartRef" style="width:100%;height:260px"></div>
           </el-card>
         </el-col>
       </el-row>
@@ -78,6 +85,22 @@
           <el-descriptions-item v-if="data.summary?.key_steps" label="关键步骤" :span="2">{{ data.summary.key_steps }}</el-descriptions-item>
           <el-descriptions-item v-if="data.summary?.important_info" label="重要信息" :span="2">{{ data.summary.important_info }}</el-descriptions-item>
         </el-descriptions>
+      </el-card>
+
+      <!-- 高频关键词 -->
+      <el-card v-if="data.topKeywords?.length" shadow="never" style="margin-bottom:16px">
+        <template #header><span style="font-weight:600">高频关键词 TOP{{ data.topKeywords.length }}</span></template>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <el-tag
+            v-for="(kw, idx) in data.topKeywords"
+            :key="kw.word"
+            :style="{ fontSize: Math.max(12, 24 - idx * 0.6) + 'px', opacity: 1 - idx * 0.03 }"
+            :type="['', 'success', 'warning', 'danger', 'info'][idx % 5]"
+            effect="plain"
+          >
+            {{ kw.word }} ({{ kw.count }})
+          </el-tag>
+        </div>
       </el-card>
 
       <!-- 关联文章 -->
@@ -128,6 +151,7 @@ import { getEventReport } from '@/api/event'
 import { qaReport } from '@/api/report'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
+import 'echarts-wordcloud'
 
 const route = useRoute()
 const router = useRouter()
@@ -143,10 +167,12 @@ const qaHistory = ref([])
 // ECharts refs
 const trendChartRef = ref(null)
 const sentimentChartRef = ref(null)
+const wordCloudChartRef = ref(null)
 const sourceChartRef = ref(null)
 
 let trendChart = null
 let sentimentChart = null
+let wordCloudChart = null
 let sourceChart = null
 
 const keywordList = computed(() => {
@@ -197,6 +223,7 @@ async function fetchData() {
 function renderCharts() {
   renderTrendChart()
   renderSentimentChart()
+  renderWordCloudChart()
   renderSourceChart()
 }
 
@@ -209,9 +236,23 @@ function renderTrendChart() {
   const dates = trend.map(t => t.date)
   const counts = trend.map(t => t.count)
 
+  // 找出峰值和谷值进行标注
+  const maxVal = Math.max(...counts)
+  const minVal = Math.min(...counts)
+  const maxIdx = counts.indexOf(maxVal)
+  const minIdx = counts.indexOf(minVal)
+
+  const markPoints = []
+  if (maxIdx >= 0) {
+    markPoints.push({ name: '峰值', coord: [maxIdx, maxVal], value: maxVal + '篇', symbol: 'pin', symbolSize: 36, itemStyle: { color: '#F56C6C' }, label: { fontSize: 11 } })
+  }
+  if (minIdx >= 0 && minIdx !== maxIdx) {
+    markPoints.push({ name: '低谷', coord: [minIdx, minVal], value: minVal + '篇', symbol: 'triangle', symbolSize: 20, itemStyle: { color: '#409EFF' }, label: { fontSize: 11 } })
+  }
+
   trendChart.setOption({
     tooltip: { trigger: 'axis' },
-    grid: { left: 50, right: 20, top: 20, bottom: 40 },
+    grid: { left: 50, right: 30, top: 30, bottom: 40 },
     xAxis: { type: 'category', data: dates, axisLabel: { rotate: 30, fontSize: 11 } },
     yAxis: { type: 'value', name: '篇', minInterval: 1 },
     series: [{
@@ -221,7 +262,11 @@ function renderTrendChart() {
       lineStyle: { width: 2 },
       symbol: 'circle',
       symbolSize: 4,
-      areaStyle: { color: 'rgba(64, 158, 255, 0.15)' }
+      areaStyle: { color: 'rgba(64, 158, 255, 0.15)' },
+      markPoint: {
+        data: markPoints,
+        animation: true
+      }
     }]
   })
 }
@@ -245,6 +290,32 @@ function renderSentimentChart() {
         { value: Math.round(s.neutral * s.total), name: '中立', itemStyle: { color: '#909399' } },
         { value: Math.round(s.negative * s.total), name: '负面', itemStyle: { color: '#F56C6C' } },
       ]
+    }]
+  })
+}
+
+function renderWordCloudChart() {
+  if (!wordCloudChartRef.value || !data.value?.topKeywords?.length) return
+  if (wordCloudChart) wordCloudChart.dispose()
+  wordCloudChart = echarts.init(wordCloudChartRef.value)
+
+  const keywords = data.value.topKeywords
+  const maxCount = keywords[0]?.count || 1
+  wordCloudChart.setOption({
+    tooltip: { show: true },
+    series: [{
+      type: 'wordCloud',
+      shape: 'circle',
+      sizeRange: [14, 48],
+      rotationRange: [-45, 45],
+      gridSize: 8,
+      drawOutOfBound: false,
+      textStyle: {
+        fontFamily: 'sans-serif',
+        fontWeight: 'bold',
+        color: () => ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399'][Math.floor(Math.random() * 5)]
+      },
+      data: keywords.map(k => ({ name: k.word, value: k.count }))
     }]
   })
 }
@@ -308,6 +379,7 @@ async function doAsk() {
 function handleResize() {
   trendChart?.resize()
   sentimentChart?.resize()
+  wordCloudChart?.resize()
   sourceChart?.resize()
 }
 
@@ -320,6 +392,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   trendChart?.dispose()
   sentimentChart?.dispose()
+  wordCloudChart?.dispose()
   sourceChart?.dispose()
 })
 </script>

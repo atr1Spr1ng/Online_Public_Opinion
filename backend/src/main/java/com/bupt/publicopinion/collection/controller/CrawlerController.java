@@ -19,6 +19,7 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -111,6 +112,11 @@ public class CrawlerController {
     @PostMapping("/sources")
     public NewsSource createNewsSource(@Valid @RequestBody NewsSourceRequest request) {
         return crawlerService.createNewsSource(request);
+    }
+
+    @PutMapping("/sources/{sourceId}")
+    public NewsSource updateNewsSource(@PathVariable Long sourceId, @Valid @RequestBody NewsSourceRequest request) {
+        return crawlerService.updateNewsSource(sourceId, request);
     }
 
     @PostMapping("/sources/{sourceId}/status")

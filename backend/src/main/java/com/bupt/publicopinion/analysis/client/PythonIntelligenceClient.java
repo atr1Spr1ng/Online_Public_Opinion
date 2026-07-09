@@ -293,6 +293,77 @@ public class PythonIntelligenceClient {
     }
 
     @SuppressWarnings("unchecked")
+    public Map<String, Object> analyzePropagation(Map<String, Object> payload) {
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/event/propagation")
+                    .body(payload)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                throw new IntelligenceServiceException("Python 传播分析服务返回空响应");
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("spread_depth", safeInt(result.get("spread_depth"), 0));
+            response.put("total_nodes", safeInt(result.get("total_nodes"), 0));
+            response.put("duration_hours", toBigDecimal(result.get("duration_hours")));
+            response.put("spread_speed", toBigDecimal(result.get("spread_speed")));
+            response.put("method", safeString(result.get("method"), "fallback"));
+
+            // nodes
+            List<Map<String, Object>> nodes = new ArrayList<>();
+            Object nodesObj = result.get("nodes");
+            if (nodesObj instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        Map<String, Object> node = new HashMap<>();
+                        node.put("cleanId", safeInt(m.get("id"), 0));
+                        node.put("articleTitle", safeString(m.get("title"), ""));
+                        node.put("sourceName", safeString(m.get("source_name"), ""));
+                        node.put("publishedAt", safeString(m.get("published_at"), ""));
+                        node.put("depth", safeInt(m.get("depth"), 0));
+                        node.put("isSource", Boolean.TRUE.equals(m.get("is_source")));
+                        node.put("isInfluencer", Boolean.TRUE.equals(m.get("is_influencer")));
+                        node.put("nodeType", safeString(m.get("node_type"), "commercial"));
+                        nodes.add(node);
+                    }
+                }
+            }
+            response.put("nodes", nodes);
+
+            // edges
+            List<Map<String, Object>> edges = new ArrayList<>();
+            Object edgesObj = result.get("edges");
+            if (edgesObj instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        Map<String, Object> edge = new HashMap<>();
+                        edge.put("source", safeInt(m.get("source"), 0));
+                        edge.put("target", safeInt(m.get("target"), 0));
+                        edge.put("similarity", toBigDecimal(m.get("similarity")));
+                        edges.add(edge);
+                    }
+                }
+            }
+            response.put("edges", edges);
+
+            return response;
+
+        } catch (IntelligenceServiceException e) {
+            throw e;
+        } catch (RestClientException e) {
+            throw new IntelligenceServiceException("调用 Python 传播分析服务失败", e);
+        }
+    }
+
+    private int safeInt(Object value, int defaultValue) {
+        if (value instanceof Number num) return num.intValue();
+        return defaultValue;
+    }
+
+    @SuppressWarnings("unchecked")
     public Map<String, Object> getEventSummary(Map<String, Object> eventData) {
         try {
             Map<?, ?> result = intelligenceRestClient.post()

@@ -186,13 +186,59 @@ public class EventServiceImpl implements EventService {
     }
 
     @Override
-    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category) {
+    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category, String sortBy) {
         Page<Event> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
-                .eq(category != null && !category.isBlank(), Event::getCategory, category)
-                .orderByDesc(Event::getHotness);
+                .eq(category != null && !category.isBlank(), Event::getCategory, category);
+        if ("time".equals(sortBy)) {
+            wrapper.orderByDesc(Event::getStartTime);
+        } else {
+            wrapper.orderByDesc(Event::getHotness);
+        }
         Page<Event> result = eventMapper.selectPage(page, wrapper);
-        List<EventVO> records = result.getRecords().stream().map(EventVO::from).toList();
+
+        // 批量查询每个事件的情感数据
+        List<Long> eventIds = result.getRecords().stream().map(Event::getId).toList();
+        Map<Long, Map<String, BigDecimal>> sentimentMap = new HashMap<>();
+        if (!eventIds.isEmpty()) {
+            List<EventArticle> allRelations = eventArticleMapper.selectList(
+                    new LambdaQueryWrapper<EventArticle>().in(EventArticle::getEventId, eventIds)
+            );
+            Map<Long, List<Long>> eventCleanIds = allRelations.stream()
+                    .collect(Collectors.groupingBy(EventArticle::getEventId,
+                            Collectors.mapping(EventArticle::getCleanId, Collectors.toList())));
+
+            for (var entry : eventCleanIds.entrySet()) {
+                Long eid = entry.getKey();
+                List<Long> cids = entry.getValue();
+                if (cids.isEmpty()) continue;
+                List<ArticleSentiment> sentiments = articleSentimentMapper.selectList(
+                        new LambdaQueryWrapper<ArticleSentiment>().in(ArticleSentiment::getCleanId, cids)
+                );
+                int pos = 0, neg = 0, neu = 0;
+                for (ArticleSentiment s : sentiments) {
+                    switch (s.getSentiment()) {
+                        case "POSITIVE" -> pos++;
+                        case "NEGATIVE" -> neg++;
+                        default -> neu++;
+                    }
+                }
+                int total = Math.max(sentiments.size(), 1);
+                Map<String, BigDecimal> m = new HashMap<>();
+                m.put("pos", BigDecimal.valueOf(pos).divide(BigDecimal.valueOf(total), 4, java.math.RoundingMode.HALF_UP));
+                m.put("neg", BigDecimal.valueOf(neg).divide(BigDecimal.valueOf(total), 4, java.math.RoundingMode.HALF_UP));
+                m.put("neu", BigDecimal.valueOf(neu).divide(BigDecimal.valueOf(total), 4, java.math.RoundingMode.HALF_UP));
+                sentimentMap.put(eid, m);
+            }
+        }
+
+        List<EventVO> records = result.getRecords().stream().map(e -> {
+            Map<String, BigDecimal> sent = sentimentMap.get(e.getId());
+            if (sent != null) {
+                return EventVO.from(e, sent.get("pos"), sent.get("neg"), sent.get("neu"));
+            }
+            return EventVO.from(e);
+        }).toList();
         return new PageResult<>(records, result.getTotal(), pageNum, pageSize);
     }
 
@@ -228,7 +274,8 @@ public class EventServiceImpl implements EventService {
                         doc.getCategory(),
                         doc.getStartTime(),
                         doc.getEndTime(),
-                        doc.getCreateTime()
+                        doc.getCreateTime(),
+                        null, null, null
                 ))
                 .toList();
         return new PageResult<>(records, page.getTotalElements(), pageNum, pageSize);
@@ -309,6 +356,7 @@ public class EventServiceImpl implements EventService {
         // 4. 平台分布 + 5. 文章列表
         List<Map<String, Object>> sourceDistribution = new ArrayList<>();
         List<Map<String, Object>> articleList = new ArrayList<>();
+        List<Map<String, Object>> topKeywords = new ArrayList<>();
         if (!cleanIds.isEmpty()) {
             List<ArticleClean> articles = articleCleanMapper.selectList(
                     new LambdaQueryWrapper<ArticleClean>()
@@ -339,6 +387,29 @@ public class EventServiceImpl implements EventService {
                         item.put("title", a.getTitle() != null ? a.getTitle() : "");
                         item.put("sourceName", a.getSourceName() != null ? a.getSourceName() : "");
                         item.put("publishedAt", a.getPublishedAt() != null ? a.getPublishedAt() : "");
+                        return item;
+                    })
+                    .toList();
+
+            // 高频关键词统计（基于文章 keywords 字段聚合词频）
+            Map<String, Long> wordFreq = new HashMap<>();
+            for (ArticleClean a : articles) {
+                String kw = a.getKeywords();
+                if (kw == null || kw.isBlank()) continue;
+                for (String word : kw.split("[,，]")) {
+                    String trimmed = word.trim();
+                    if (!trimmed.isEmpty() && trimmed.length() >= 2) {
+                        wordFreq.merge(trimmed, 1L, Long::sum);
+                    }
+                }
+            }
+            topKeywords = wordFreq.entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                    .limit(20)
+                    .map(e -> {
+                        Map<String, Object> item = new HashMap<>();
+                        item.put("word", e.getKey());
+                        item.put("count", e.getValue().intValue());
                         return item;
                     })
                     .toList();
@@ -389,6 +460,7 @@ public class EventServiceImpl implements EventService {
         response.put("sourceDistribution", sourceDistribution);
         response.put("dailyTrend", dailyTrend);
         response.put("articles", articleList);
+        response.put("topKeywords", topKeywords);
         return response;
     }
 

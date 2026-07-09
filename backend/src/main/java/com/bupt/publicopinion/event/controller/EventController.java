@@ -27,8 +27,9 @@ public class EventController {
     @GetMapping
     public ApiResult<?> list(@RequestParam(defaultValue = "1") long pageNum,
                               @RequestParam(defaultValue = "10") long pageSize,
-                              @RequestParam(required = false) String category) {
-        return ApiResult.success(eventService.listEvents(pageNum, pageSize, category));
+                              @RequestParam(required = false) String category,
+                              @RequestParam(defaultValue = "hotness") String sortBy) {
+        return ApiResult.success(eventService.listEvents(pageNum, pageSize, category, sortBy));
     }
 
     @GetMapping("/search")

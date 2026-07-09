@@ -15,6 +15,11 @@
         <el-select v-model="filterCategory" placeholder="全部" clearable style="width:160px" @change="onCategoryChange">
           <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
         </el-select>
+        <span style="font-size:14px;color:#606266;margin-left:8px">排序：</span>
+        <el-radio-group v-model="sortBy" @change="onSortChange" size="small">
+          <el-radio-button value="hotness">热度</el-radio-button>
+          <el-radio-button value="time">时间</el-radio-button>
+        </el-radio-group>
       </div>
       <el-table :data="tableData" v-loading="loading" border stripe>
         <el-table-column prop="id" label="ID" width="60" />
@@ -27,6 +32,18 @@
         </el-table-column>
         <el-table-column prop="articleCount" label="文章数" width="80" />
         <el-table-column prop="hotness" label="热度" width="80" />
+        <el-table-column label="情感" width="150">
+          <template #default="{ row }">
+            <template v-if="row.sentimentPositive != null">
+              <span style="display:flex;gap:4px;align-items:center;font-size:12px">
+                <span style="color:#67C23A">正{{ (row.sentimentPositive * 100).toFixed(0) }}%</span>
+                <span style="color:#909399">中{{ (row.sentimentNeutral * 100).toFixed(0) }}%</span>
+                <span style="color:#F56C6C">负{{ (row.sentimentNegative * 100).toFixed(0) }}%</span>
+              </span>
+            </template>
+            <span v-else style="color:#909399">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="lifecycle" label="生命周期" width="100">
           <template #default="{ row }">
             <el-tag :type="lifecycleType(row.lifecycle)">{{ row.lifecycle }}</el-tag>
@@ -81,24 +98,21 @@
       </el-descriptions>
     </el-dialog>
 
-    <el-dialog v-model="pathVisible" title="传播路径分析" width="700px">
+    <el-dialog v-model="pathVisible" title="传播路径分析" width="800px" @opened="renderPathGraph">
       <el-descriptions v-if="pathResult" :column="2" border style="margin-bottom:16px">
         <el-descriptions-item label="传播深度">{{ pathResult.spreadDepth }}</el-descriptions-item>
         <el-descriptions-item label="节点总数">{{ pathResult.totalNodes }}</el-descriptions-item>
         <el-descriptions-item label="持续时间(h)">{{ pathResult.durationHours }}</el-descriptions-item>
         <el-descriptions-item label="传播速度">{{ pathResult.spreadSpeed }} 篇/小时</el-descriptions-item>
       </el-descriptions>
-      <el-timeline v-if="pathResult.nodes?.length">
-        <el-timeline-item
-          v-for="node in pathResult.nodes"
-          :key="node.id"
-          :timestamp="node.publishedAt"
-          :color="node.isSource ? '#409EFF' : '#67C23A'"
-        >
-          {{ node.articleTitle || `文章#${node.cleanId}` }}
-          <el-tag size="small" :type="node.isSource ? 'primary' : 'success'">{{ node.isSource ? '源头' : '传播节点' }}</el-tag>
-        </el-timeline-item>
-      </el-timeline>
+      <div v-if="pathResult" style="margin-bottom:4px;display:flex;gap:12px;align-items:center;font-size:12px;color:#606266">
+        <span>分析：<el-tag size="small" :type="pathResult.method === 'llm' ? 'success' : 'warning'">{{ pathResult.method === 'llm' ? 'AI 分析' : '规则降级' }}</el-tag></span>
+        <span style="margin-left:8px"><span style="display:inline-block;width:10px;height:10px;background:#F56C6C;border-radius:2px;margin-right:2px;vertical-align:middle"></span>官方</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#67C23A;border-radius:2px;margin-right:2px;vertical-align:middle"></span>社交</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#409EFF;border-radius:2px;margin-right:2px;vertical-align:middle"></span>商业</span>
+        <span>⬩ 关键节点</span>
+      </div>
+      <div v-if="pathResult?.nodes?.length" ref="pathGraphRef" style="width:100%;height:400px"></div>
     </el-dialog>
 
     <el-dialog v-model="trendVisible" :title="'趋势预测：' + trendTitle" width="750px" @opened="renderTrendChart">
@@ -143,12 +157,15 @@ const clusterVisible = ref(false)
 const threshold = ref(0.25)
 
 const filterCategory = ref('')
+const sortBy = ref('hotness')
 const categories = ['社会民生', '科技经济', '教育文化', '医疗卫生', '政治法律', '生态环境', '娱乐体育', '国际时政', '其他']
 
 const sourceVisible = ref(false)
 const sourceResult = ref(null)
 const pathVisible = ref(false)
 const pathResult = ref(null)
+const pathGraphRef = ref(null)
+let pathChart = null
 
 const trendVisible = ref(false)
 const trendLoading = ref(false)
@@ -179,10 +196,15 @@ function onCategoryChange() {
   fetchData()
 }
 
+function onSortChange() {
+  pageNum.value = 1
+  fetchData()
+}
+
 async function fetchData() {
   loading.value = true
   try {
-    const params = { pageNum: pageNum.value, pageSize: pageSize.value }
+    const params = { pageNum: pageNum.value, pageSize: pageSize.value, sortBy: sortBy.value }
     if (filterCategory.value) params.category = filterCategory.value
     const res = await listEvents(params)
     if (res.code === 200) {
@@ -242,7 +264,72 @@ async function doAnalyzePath(row) {
     const res = await analyzePropagation({ eventId: row.id })
     pathResult.value = res.data
     pathVisible.value = true
+    await nextTick()
+    renderPathGraph()
   } catch (e) { ElMessage.error(e.message) }
+}
+
+function renderPathGraph() {
+  if (!pathGraphRef.value || !pathResult.value?.nodes?.length) return
+  if (pathChart) pathChart.dispose()
+  pathChart = echarts.init(pathGraphRef.value)
+
+  const typeName = { official: '官方媒体', commercial: '商业媒体', social: '社交媒体' }
+
+  const nodeColor = n => {
+    if (n.isSource) return '#E6A23C'
+    if (n.nodeType === 'official') return '#F56C6C'
+    if (n.nodeType === 'social') return '#67C23A'
+    return '#409EFF'
+  }
+
+  const nodes = pathResult.value.nodes.map(n => ({
+    id: n.cleanId,
+    name: n.articleTitle || `文章#${n.cleanId}`,
+    symbolSize: n.isSource ? 44 : n.isInfluencer ? 36 : Math.max(18, 32 - (n.depth || 0) * 3),
+    symbol: n.isInfluencer ? 'diamond' : 'circle',
+    itemStyle: { color: nodeColor(n), borderColor: n.isInfluencer ? '#333' : 'transparent', borderWidth: n.isInfluencer ? 2 : 0 },
+    label: { show: true, fontSize: n.isSource ? 12 : 10, formatter: p => {
+      const label = p.name.length > 10 ? p.name.slice(0, 10) + '...' : p.name
+      if (n.isSource) return label + '\n源头'
+      if (n.isInfluencer) return label + '\n★关键'
+      return label
+    } }
+  }))
+
+  const links = (pathResult.value.edges || []).map(e => ({
+    source: String(e.source),
+    target: String(e.target),
+    lineStyle: { width: Math.max(1, (e.similarity || 0) * 4), opacity: Math.min(1, (e.similarity || 0) + 0.3) }
+  }))
+
+  if (links.length === 0 && pathResult.value.nodes.length > 1) {
+    const sourceNode = pathResult.value.nodes.find(n => n.isSource)
+    pathResult.value.nodes.filter(n => !n.isSource).forEach(n => {
+      if (sourceNode?.cleanId) links.push({ source: String(sourceNode.cleanId), target: String(n.cleanId), lineStyle: { width: 1, opacity: 0.5 } })
+    })
+  }
+
+  pathChart.setOption({
+    tooltip: { formatter: p => {
+      if (p.dataType === 'node') {
+        const n = pathResult.value.nodes.find(x => x.cleanId == p.id) || {}
+        const tags = [n.isSource && '源头', n.isInfluencer && '关键节点', typeName[n.nodeType]].filter(Boolean).join(' | ')
+        return `${p.name}<br/>来源: ${n.sourceName || '未知'}<br/>${tags}`
+      }
+      return ''
+    } },
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      force: { repulsion: 350, edgeLength: [120, 300], gravity: 0.08 },
+      roam: true,
+      draggable: true,
+      data: nodes,
+      links: links,
+      lineStyle: { color: '#c0c4cc', curveness: 0.25 }
+    }]
+  })
 }
 
 async function doGenerateReport(row) {

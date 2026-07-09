@@ -42,4 +42,6 @@ public interface CrawlerService {
     NewsSource createNewsSource(NewsSourceRequest request);
 
     NewsSource updateNewsSourceStatus(Long sourceId, Integer status);
+
+    NewsSource updateNewsSource(Long sourceId, NewsSourceRequest request);
 }

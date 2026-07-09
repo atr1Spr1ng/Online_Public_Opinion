@@ -1,5 +1,9 @@
 import request from './request'
 
+export function getReportHealth() {
+  return request({ url: '/report/health', method: 'get' })
+}
+
 export function generateReport(data) {
   return request({ url: '/report/generate', method: 'post', data })
 }

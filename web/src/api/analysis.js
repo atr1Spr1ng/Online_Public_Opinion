@@ -1,5 +1,9 @@
 import request from './request'
 
+export function getAnalysisHealth() {
+  return request({ url: '/analysis/health', method: 'get' })
+}
+
 export function analyzeSentiment(data) {
   return request({ url: '/analysis/sentiment', method: 'post', data })
 }

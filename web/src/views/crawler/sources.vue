@@ -60,7 +60,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { getSources, addSource, toggleSource, crawlBySource } from '@/api/crawler'
+import { getSources, addSource, updateSource, toggleSource, crawlBySource } from '@/api/crawler'
 import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
@@ -87,10 +87,17 @@ async function fetchData() {
   finally { loading.value = false }
 }
 
+let editingId = null
+
 function openDialog(row) {
   isEdit.value = !!row
-  if (row) Object.assign(form, { sourceName: row.sourceName, sourceType: row.sourceType, sourceUrl: row.sourceUrl })
-  else Object.assign(form, { sourceName: '', sourceType: 'portal', sourceUrl: '' })
+  if (row) {
+    editingId = row.id
+    Object.assign(form, { sourceName: row.sourceName, sourceType: row.sourceType, sourceUrl: row.sourceUrl })
+  } else {
+    editingId = null
+    Object.assign(form, { sourceName: '', sourceType: 'portal', sourceUrl: '' })
+  }
   dialogVisible.value = true
 }
 
@@ -99,7 +106,11 @@ async function handleSave() {
   if (!valid) return
   saving.value = true
   try {
-    await addSource({ ...form })
+    if (isEdit.value) {
+      await updateSource(editingId, { ...form })
+    } else {
+      await addSource({ ...form })
+    }
     ElMessage.success(isEdit.value ? '修改成功' : '新增成功')
     dialogVisible.value = false
     fetchData()

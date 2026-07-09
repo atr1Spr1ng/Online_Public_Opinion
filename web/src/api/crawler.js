@@ -12,6 +12,10 @@ export function addSource(data) {
   return request({ url: '/crawler/sources', method: 'post', data })
 }
 
+export function updateSource(id, data) {
+  return request({ url: `/crawler/sources/${id}`, method: 'put', data })
+}
+
 export function toggleSource(id, status) {
   return request({ url: `/crawler/sources/${id}/status`, method: 'post', params: { status } })
 }

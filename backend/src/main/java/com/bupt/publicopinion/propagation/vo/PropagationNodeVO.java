@@ -11,6 +11,8 @@ public record PropagationNodeVO(
         Integer depth,
         Long parentNodeId,
         Boolean isSource,
+        Boolean isInfluencer,
+        String nodeType,
         LocalDateTime createTime
 ) {
 }

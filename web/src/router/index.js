@@ -26,6 +26,7 @@ const routes = [
       { path: 'fake', name: 'FakeDetection', component: () => import('@/views/fake/index.vue'), meta: { title: '虚假检测', icon: 'WarningFilled' } },
       { path: 'report', name: 'Report', component: () => import('@/views/report/index.vue'), meta: { title: '舆情报告', icon: 'DataAnalysis' } },
       { path: 'user/profile', name: 'UserProfile', component: () => import('@/views/user/profile.vue'), meta: { title: '个人信息', icon: 'User' } },
+      { path: 'search', name: 'Search', component: () => import('@/views/search/index.vue'), meta: { title: '文章搜索', icon: 'Search' } },
       { path: 'user/preferences', name: 'UserPreferences', component: () => import('@/views/user/preferences.vue'), meta: { title: '偏好管理', icon: 'Setting' } }
     ]
   }

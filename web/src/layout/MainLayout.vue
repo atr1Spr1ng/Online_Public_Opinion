@@ -54,6 +54,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>舆情报告</span>
         </el-menu-item>
+        <el-menu-item index="/search">
+          <el-icon><Search /></el-icon>
+          <span>文章搜索</span>
+        </el-menu-item>
         <el-sub-menu index="user">
           <template #title>
             <el-icon><User /></el-icon>

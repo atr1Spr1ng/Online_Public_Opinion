@@ -267,6 +267,23 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public NewsSource updateNewsSource(Long sourceId, NewsSourceRequest request) {
+        NewsSource source = newsSourceMapper.selectById(sourceId);
+        if (source == null) {
+            throw new IllegalArgumentException("新闻源不存在: " + sourceId);
+        }
+        source.setSourceName(request.sourceName());
+        source.setSourceType(request.sourceType());
+        source.setSourceUrl(request.sourceUrl());
+        if (request.status() != null) {
+            source.setStatus(request.status());
+        }
+        newsSourceMapper.updateById(source);
+        return source;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public NewsSource updateNewsSourceStatus(Long sourceId, Integer status) {
         NewsSource source = newsSourceMapper.selectById(sourceId);
         if (source == null) {

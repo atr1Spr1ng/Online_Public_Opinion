@@ -1,6 +1,7 @@
 package com.bupt.publicopinion.propagation.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
 import com.bupt.publicopinion.event.entity.Event;
@@ -40,29 +41,32 @@ public class PropagationServiceImpl implements PropagationService {
     private final EventMapper eventMapper;
     private final EventArticleMapper eventArticleMapper;
     private final ArticleCleanMapper articleCleanMapper;
+    private final PythonIntelligenceClient pythonIntelligenceClient;
 
     public PropagationServiceImpl(
             PropagationPathMapper propagationPathMapper,
             PropagationNodeMapper propagationNodeMapper,
             EventMapper eventMapper,
             EventArticleMapper eventArticleMapper,
-            ArticleCleanMapper articleCleanMapper
+            ArticleCleanMapper articleCleanMapper,
+            PythonIntelligenceClient pythonIntelligenceClient
     ) {
         this.propagationPathMapper = propagationPathMapper;
         this.propagationNodeMapper = propagationNodeMapper;
         this.eventMapper = eventMapper;
         this.eventArticleMapper = eventArticleMapper;
         this.articleCleanMapper = articleCleanMapper;
+        this.pythonIntelligenceClient = pythonIntelligenceClient;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public PropagationPathVO analyze(PropagationAnalysisRequest request) {
         Event event = eventMapper.selectById(request.eventId());
         if (event == null) {
             throw new PropagationAnalysisException("事件不存在: " + request.eventId());
         }
 
-        // 获取关联文章
         LambdaQueryWrapper<EventArticle> relWrapper = new LambdaQueryWrapper<>();
         relWrapper.eq(EventArticle::getEventId, event.getId());
         List<EventArticle> relations = eventArticleMapper.selectList(relWrapper);
@@ -73,22 +77,44 @@ public class PropagationServiceImpl implements PropagationService {
         List<Long> cleanIds = relations.stream().map(EventArticle::getCleanId).toList();
         List<ArticleClean> articles = articleCleanMapper.selectBatchIds(cleanIds);
 
-        // 按时间排序（published_at为null时用create_time兜底）
+        // 按时间排序
         List<ArticleClean> sortedArticles = articles.stream()
                 .sorted(Comparator.comparing(a -> parseTime(effectiveTime(a))))
                 .toList();
-
-        // 溯源：第一篇发布的文章
         ArticleClean sourceArticle = sortedArticles.get(0);
 
-        // 先保存传播路径（需要先有path id）
+        // ── 尝试调用 Python 传播分析 ──
+        Map<String, Object> pythonResult = null;
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("event_id", event.getId());
+            payload.put("event_title", event.getTitle() != null ? event.getTitle() : "");
+
+            List<Map<String, Object>> pyArticles = new ArrayList<>();
+            for (ArticleClean a : articles) {
+                Map<String, Object> pa = new HashMap<>();
+                pa.put("id", a.getId());
+                pa.put("title", a.getTitle() != null ? a.getTitle() : "");
+                pa.put("content", a.getContent() != null ? a.getContent() : "");
+                pa.put("source_name", a.getSourceName() != null ? a.getSourceName() : "");
+                pa.put("published_at", effectiveTime(a));
+                pyArticles.add(pa);
+            }
+            payload.put("articles", pyArticles);
+
+            pythonResult = pythonIntelligenceClient.analyzePropagation(payload);
+        } catch (Exception e) {
+            System.err.println("[Propagation] Python 传播分析失败，降级为规则分析: " + e.getMessage());
+            pythonResult = null;
+        }
+
+        // ── 保存到数据库 ──
         PropagationPath path = new PropagationPath();
         path.setEventId(event.getId());
         path.setSourceArticleId(sourceArticle.getId());
         path.setSourceName(sourceArticle.getSourceName());
         propagationPathMapper.insert(path);
 
-        // 先保存源头节点，获取其ID作为子节点的parent
         PropagationNode sourceNode = new PropagationNode();
         sourceNode.setPathId(path.getId());
         sourceNode.setCleanId(sourceArticle.getId());
@@ -98,29 +124,52 @@ public class PropagationServiceImpl implements PropagationService {
         sourceNode.setIsSource(1);
         propagationNodeMapper.insert(sourceNode);
 
-        // 构建传播层级树（子节点以sourceNode.id为parent）
-        List<PropagationNode> childNodes = buildPropagationTree(sortedArticles, sourceArticle,
-                sourceNode.getId(), path.getId());
+        List<PropagationNode> childNodes = new ArrayList<>();
+        if (pythonResult != null) {
+            // Python 成功：使用 Python 的 nodes/edges 结果
+            List<Map<String, Object>> pyNodes = (List<Map<String, Object>>) pythonResult.getOrDefault("nodes", List.of());
+            for (Map<String, Object> pn : pyNodes) {
+                int cleanId = toInt(pn.get("cleanId"));
+                if (cleanId == sourceArticle.getId().intValue()) continue;
+                PropagationNode node = new PropagationNode();
+                node.setPathId(path.getId());
+                node.setCleanId((long) cleanId);
+                node.setSourceName((String) pn.getOrDefault("sourceName", ""));
+                node.setPublishedAt((String) pn.getOrDefault("publishedAt", ""));
+                node.setDepth(toInt(pn.get("depth")));
+                node.setParentNodeId(sourceNode.getId());
+                node.setIsSource(0);
+                propagationNodeMapper.insert(node);
+                childNodes.add(node);
+            }
+        } else {
+            // 降级：Java 规则构建
+            childNodes = buildPropagationTree(sortedArticles, sourceArticle,
+                    sourceNode.getId(), path.getId());
+            for (PropagationNode node : childNodes) {
+                propagationNodeMapper.insert(node);
+            }
+        }
 
-        // 合并所有节点
         List<PropagationNode> allNodes = new ArrayList<>();
         allNodes.add(sourceNode);
         allNodes.addAll(childNodes);
 
-        // 批量保存子节点
-        for (PropagationNode node : childNodes) {
-            propagationNodeMapper.insert(node);
-        }
-
-        // 计算传播指标
-        int spreadDepth = allNodes.stream().mapToInt(PropagationNode::getDepth).max().orElse(0);
         BigDecimal durationHours = calcDuration(sortedArticles);
         BigDecimal spreadSpeed = BigDecimal.valueOf(sortedArticles.size())
                 .divide(durationHours.compareTo(BigDecimal.ZERO) > 0 ? durationHours : BigDecimal.ONE,
                         2, RoundingMode.HALF_UP);
         String pathJson = buildPathJson(allNodes);
 
-        // 更新传播路径的指标
+        int spreadDepth;
+        if (pythonResult != null) {
+            spreadDepth = toInt(pythonResult.get("spread_depth"));
+            durationHours = (BigDecimal) pythonResult.get("duration_hours");
+            spreadSpeed = (BigDecimal) pythonResult.get("spread_speed");
+        } else {
+            spreadDepth = allNodes.stream().mapToInt(PropagationNode::getDepth).max().orElse(0);
+        }
+
         path.setSpreadDepth(spreadDepth);
         path.setTotalNodes(allNodes.size());
         path.setDurationHours(durationHours);
@@ -128,22 +177,47 @@ public class PropagationServiceImpl implements PropagationService {
         path.setPathJson(pathJson);
         propagationPathMapper.updateById(path);
 
-        // 组装VO
-        List<PropagationNodeVO> nodeVOs = allNodes.stream().map(n -> new PropagationNodeVO(
-                n.getId(), n.getCleanId(),
-                findTitleById(articles, n.getCleanId()),
-                n.getSourceName(), n.getPublishedAt(),
-                n.getDepth(), n.getParentNodeId(),
-                n.getIsSource() != null && n.getIsSource() == 1,
-                n.getCreateTime()
-        )).toList();
+        // ── 组装 VO ──
+        List<PropagationNodeVO> nodeVOs;
+        List<Map<String, Object>> edges = List.of();
+        String method = "fallback";
+
+        if (pythonResult != null) {
+            method = "llm";
+            List<Map<String, Object>> pyNodes = (List<Map<String, Object>>) pythonResult.getOrDefault("nodes", List.of());
+            nodeVOs = pyNodes.stream().map(pn -> new PropagationNodeVO(
+                    null,
+                    (long) toInt(pn.get("cleanId")),
+                    (String) pn.getOrDefault("articleTitle", ""),
+                    (String) pn.getOrDefault("sourceName", ""),
+                    (String) pn.getOrDefault("publishedAt", ""),
+                    toInt(pn.get("depth")),
+                    sourceNode.getId(),
+                    Boolean.TRUE.equals(pn.get("isSource")),
+                    Boolean.TRUE.equals(pn.get("isInfluencer")),
+                    (String) pn.getOrDefault("nodeType", "commercial"),
+                    null
+            )).toList();
+            edges = (List<Map<String, Object>>) pythonResult.getOrDefault("edges", List.of());
+        } else {
+            method = "fallback";
+            nodeVOs = allNodes.stream().map(n -> new PropagationNodeVO(
+                    n.getId(), n.getCleanId(),
+                    findTitleById(articles, n.getCleanId()),
+                    n.getSourceName(), n.getPublishedAt(),
+                    n.getDepth(), n.getParentNodeId(),
+                    n.getIsSource() != null && n.getIsSource() == 1,
+                    false, "commercial",
+                    n.getCreateTime()
+            )).toList();
+        }
 
         return new PropagationPathVO(
                 path.getId(), path.getEventId(), path.getSourceArticleId(),
                 path.getSourceName(), sourceArticle.getTitle(),
-                path.getSpreadDepth(), path.getTotalNodes(),
-                path.getDurationHours(), path.getSpreadSpeed(),
-                path.getPathJson(), nodeVOs, path.getCreateTime()
+                spreadDepth, allNodes.size(),
+                durationHours, spreadSpeed,
+                path.getPathJson(), nodeVOs, edges, method, path.getCreateTime()
         );
     }
 
@@ -175,6 +249,7 @@ public class PropagationServiceImpl implements PropagationService {
                 n.getSourceName(), n.getPublishedAt(),
                 n.getDepth(), n.getParentNodeId(),
                 n.getIsSource() != null && n.getIsSource() == 1,
+                false, "commercial",
                 n.getCreateTime()
         )).toList();
 
@@ -183,7 +258,7 @@ public class PropagationServiceImpl implements PropagationService {
                 path.getSourceName(), sourceTitle,
                 path.getSpreadDepth(), path.getTotalNodes(),
                 path.getDurationHours(), path.getSpreadSpeed(),
-                path.getPathJson(), nodeVOs, path.getCreateTime()
+                path.getPathJson(), nodeVOs, List.of(), "fallback", path.getCreateTime()
         );
     }
 
@@ -348,5 +423,10 @@ public class PropagationServiceImpl implements PropagationService {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"")
                 .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+    }
+
+    private int toInt(Object value) {
+        if (value instanceof Number num) return num.intValue();
+        return 0;
     }
 }

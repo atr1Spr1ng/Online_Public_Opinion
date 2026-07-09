@@ -1,5 +1,9 @@
 import request from './request'
 
+export function getContentHealth() {
+  return request({ url: '/content/health', method: 'get' })
+}
+
 export function cleanArticle(data) {
   return request({ url: '/content/clean', method: 'post', data })
 }

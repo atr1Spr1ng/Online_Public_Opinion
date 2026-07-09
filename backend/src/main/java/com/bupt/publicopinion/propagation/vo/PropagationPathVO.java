@@ -3,6 +3,7 @@ package com.bupt.publicopinion.propagation.vo;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public record PropagationPathVO(
         Long id,
@@ -16,6 +17,8 @@ public record PropagationPathVO(
         BigDecimal spreadSpeed,
         String pathJson,
         List<PropagationNodeVO> nodes,
+        List<Map<String, Object>> edges,
+        String method,
         LocalDateTime createTime
 ) {
 }
