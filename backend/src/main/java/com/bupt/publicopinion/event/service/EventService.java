@@ -12,11 +12,13 @@ public interface EventService {
 
     Map<String, Object> clusterAndSave(double threshold);
 
-    PageResult<EventVO> listEvents(long pageNum, long pageSize);
+    PageResult<EventVO> listEvents(long pageNum, long pageSize, String category);
 
     EventDetailVO getEvent(Long id);
 
     PageResult<EventVO> searchEvents(String keyword, long pageNum, long pageSize);
 
     List<SimilarEventResult> findSimilarEvents(String keywords, int topK);
+
+    Map<String, Object> forecastTrend(Long eventId, int periods);
 }

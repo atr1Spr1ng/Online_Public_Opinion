@@ -12,6 +12,7 @@ public record EventVO(
         Integer articleCount,
         BigDecimal hotness,
         String lifecycle,
+        String category,
         LocalDateTime startTime,
         LocalDateTime endTime,
         LocalDateTime createTime
@@ -24,6 +25,7 @@ public record EventVO(
                 event.getArticleCount(),
                 event.getHotness(),
                 event.getLifecycle(),
+                event.getCategory(),
                 event.getStartTime(),
                 event.getEndTime(),
                 event.getCreateTime()

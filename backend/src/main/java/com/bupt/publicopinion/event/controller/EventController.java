@@ -26,8 +26,9 @@ public class EventController {
 
     @GetMapping
     public ApiResult<?> list(@RequestParam(defaultValue = "1") long pageNum,
-                              @RequestParam(defaultValue = "10") long pageSize) {
-        return ApiResult.success(eventService.listEvents(pageNum, pageSize));
+                              @RequestParam(defaultValue = "10") long pageSize,
+                              @RequestParam(required = false) String category) {
+        return ApiResult.success(eventService.listEvents(pageNum, pageSize, category));
     }
 
     @GetMapping("/search")
@@ -45,5 +46,11 @@ public class EventController {
     @GetMapping("/{id}")
     public ApiResult<?> detail(@PathVariable Long id) {
         return ApiResult.success(eventService.getEvent(id));
+    }
+
+    @GetMapping("/{id}/trend")
+    public ApiResult<?> trend(@PathVariable Long id,
+                               @RequestParam(defaultValue = "7") int periods) {
+        return ApiResult.success(eventService.forecastTrend(id, periods));
     }
 }

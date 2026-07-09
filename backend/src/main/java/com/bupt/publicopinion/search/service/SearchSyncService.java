@@ -275,6 +275,7 @@ public class SearchSyncService {
         doc.setArticleCount(event.getArticleCount());
         doc.setHotness(event.getHotness() != null ? event.getHotness().floatValue() : null);
         doc.setLifecycle(event.getLifecycle());
+        doc.setCategory(event.getCategory());
         doc.setStartTime(event.getStartTime());
         doc.setEndTime(event.getEndTime());
         doc.setCreateTime(event.getCreateTime());

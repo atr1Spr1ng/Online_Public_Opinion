@@ -28,6 +28,9 @@ public class EventDocument {
     @Field(type = FieldType.Keyword)
     private String lifecycle;
 
+    @Field(type = FieldType.Keyword)
+    private String category;
+
     @Field(type = FieldType.Date)
     private LocalDateTime startTime;
 
@@ -56,6 +59,9 @@ public class EventDocument {
 
     public String getLifecycle() { return lifecycle; }
     public void setLifecycle(String lifecycle) { this.lifecycle = lifecycle; }
+
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
 
     public LocalDateTime getStartTime() { return startTime; }
     public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }

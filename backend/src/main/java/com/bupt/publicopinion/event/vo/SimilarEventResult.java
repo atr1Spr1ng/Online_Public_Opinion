@@ -8,6 +8,7 @@ public class SimilarEventResult {
     private Integer articleCount;
     private Float hotness;
     private String lifecycle;
+    private String category;
     private Double similarity;
 
     public SimilarEventResult() {}
@@ -30,6 +31,9 @@ public class SimilarEventResult {
     public String getLifecycle() { return lifecycle; }
     public void setLifecycle(String lifecycle) { this.lifecycle = lifecycle; }
 
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
+
     public Double getSimilarity() { return similarity; }
     public void setSimilarity(Double similarity) { this.similarity = similarity; }
 
@@ -41,6 +45,7 @@ public class SimilarEventResult {
         r.setArticleCount(doc.getArticleCount());
         r.setHotness(doc.getHotness());
         r.setLifecycle(doc.getLifecycle());
+        r.setCategory(doc.getCategory());
         r.setSimilarity(score);
         return r;
     }
