@@ -15,3 +15,7 @@ export function clusterEvents(data) {
 export function forecastTrend(id, params) {
   return request({ url: `/events/${id}/trend`, method: 'get', params })
 }
+
+export function getEventReport(id) {
+  return request({ url: `/events/${id}/full-report`, method: 'get' })
+}

@@ -20,6 +20,7 @@ const routes = [
       { path: 'content/clean', name: 'CleanArticles', component: () => import('@/views/content/clean.vue'), meta: { title: '清洗文章', icon: 'Brush' } },
       { path: 'analysis/sentiment', name: 'Sentiment', component: () => import('@/views/analysis/sentiment.vue'), meta: { title: '情感分析', icon: 'TrendCharts' } },
       { path: 'event', name: 'Event', component: () => import('@/views/event/index.vue'), meta: { title: '事件管理', icon: 'Opportunity' } },
+      { path: 'event/:id', name: 'EventDetail', component: () => import('@/views/event/detail.vue'), meta: { title: '事件详情', icon: 'Opportunity' } },
       { path: 'propagation/source', name: 'PropSource', component: () => import('@/views/propagation/source.vue'), meta: { title: '事件溯源', icon: 'Search' } },
       { path: 'propagation/path', name: 'PropPath', component: () => import('@/views/propagation/path.vue'), meta: { title: '传播路径', icon: 'Share' } },
       { path: 'fake', name: 'FakeDetection', component: () => import('@/views/fake/index.vue'), meta: { title: '虚假检测', icon: 'WarningFilled' } },

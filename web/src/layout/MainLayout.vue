@@ -94,7 +94,7 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const isCollapse = ref(false)
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => route.path.replace(/\/\d+$/, ''))
 
 function handleLogout() {
   userStore.logout()

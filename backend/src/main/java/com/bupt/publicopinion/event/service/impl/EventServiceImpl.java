@@ -3,7 +3,9 @@ package com.bupt.publicopinion.event.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
+import com.bupt.publicopinion.analysis.entity.ArticleSentiment;
 import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
+import com.bupt.publicopinion.analysis.mapper.ArticleSentimentMapper;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
@@ -42,6 +44,7 @@ public class EventServiceImpl implements EventService {
     private final EventMapper eventMapper;
     private final EventArticleMapper eventArticleMapper;
     private final ArticleCleanMapper articleCleanMapper;
+    private final ArticleSentimentMapper articleSentimentMapper;
     private final PythonIntelligenceClient pythonIntelligenceClient;
     private final SearchSyncService searchSyncService;
 
@@ -49,12 +52,14 @@ public class EventServiceImpl implements EventService {
             EventMapper eventMapper,
             EventArticleMapper eventArticleMapper,
             ArticleCleanMapper articleCleanMapper,
+            ArticleSentimentMapper articleSentimentMapper,
             PythonIntelligenceClient pythonIntelligenceClient,
             SearchSyncService searchSyncService
     ) {
         this.eventMapper = eventMapper;
         this.eventArticleMapper = eventArticleMapper;
         this.articleCleanMapper = articleCleanMapper;
+        this.articleSentimentMapper = articleSentimentMapper;
         this.pythonIntelligenceClient = pythonIntelligenceClient;
         this.searchSyncService = searchSyncService;
     }
@@ -256,6 +261,134 @@ public class EventServiceImpl implements EventService {
         response.put("forecast", result.get("forecast"));
         response.put("trend", result.get("trend"));
         response.put("note", result.get("note"));
+        return response;
+    }
+
+    @Override
+    public Map<String, Object> fullReport(Long eventId) {
+        // 1. 验证事件存在
+        Event event = eventMapper.selectById(eventId);
+        if (event == null) {
+            throw new EventNotFoundException("事件不存在: " + eventId);
+        }
+
+        // 2. 获取 cleanIds
+        List<EventArticle> relations = eventArticleMapper.selectList(
+                new LambdaQueryWrapper<EventArticle>()
+                        .eq(EventArticle::getEventId, eventId)
+        );
+        List<Long> cleanIds = relations.stream().map(EventArticle::getCleanId).toList();
+
+        // 3. 情感统计
+        Map<String, Object> sentiment = new HashMap<>();
+        if (!cleanIds.isEmpty()) {
+            List<ArticleSentiment> sentiments = articleSentimentMapper.selectList(
+                    new LambdaQueryWrapper<ArticleSentiment>()
+                            .in(ArticleSentiment::getCleanId, cleanIds)
+            );
+            int pos = 0, neg = 0, neu = 0;
+            for (ArticleSentiment s : sentiments) {
+                switch (s.getSentiment()) {
+                    case "POSITIVE" -> pos++;
+                    case "NEGATIVE" -> neg++;
+                    default -> neu++;
+                }
+            }
+            int total = Math.max(sentiments.size(), 1);
+            sentiment.put("positive", BigDecimal.valueOf(pos).divide(BigDecimal.valueOf(total), 4, java.math.RoundingMode.HALF_UP));
+            sentiment.put("negative", BigDecimal.valueOf(neg).divide(BigDecimal.valueOf(total), 4, java.math.RoundingMode.HALF_UP));
+            sentiment.put("neutral", BigDecimal.valueOf(neu).divide(BigDecimal.valueOf(total), 4, java.math.RoundingMode.HALF_UP));
+            sentiment.put("total", sentiments.size());
+        } else {
+            sentiment.put("positive", BigDecimal.ZERO);
+            sentiment.put("negative", BigDecimal.ZERO);
+            sentiment.put("neutral", BigDecimal.ZERO);
+            sentiment.put("total", 0);
+        }
+
+        // 4. 平台分布 + 5. 文章列表
+        List<Map<String, Object>> sourceDistribution = new ArrayList<>();
+        List<Map<String, Object>> articleList = new ArrayList<>();
+        if (!cleanIds.isEmpty()) {
+            List<ArticleClean> articles = articleCleanMapper.selectList(
+                    new LambdaQueryWrapper<ArticleClean>()
+                            .in(ArticleClean::getId, cleanIds)
+            );
+
+            // 平台分布
+            Map<String, Long> sourceCounts = articles.stream()
+                    .collect(Collectors.groupingBy(
+                            a -> a.getSourceName() != null && !a.getSourceName().isBlank()
+                                    ? a.getSourceName() : "未知来源",
+                            Collectors.counting()
+                    ));
+            sourceDistribution = sourceCounts.entrySet().stream()
+                    .map(e -> {
+                        Map<String, Object> item = new HashMap<>();
+                        item.put("source", e.getKey());
+                        item.put("count", e.getValue().intValue());
+                        return item;
+                    })
+                    .toList();
+
+            // 文章列表（仅返回基本信息）
+            articleList = articles.stream()
+                    .map(a -> {
+                        Map<String, Object> item = new HashMap<>();
+                        item.put("id", a.getId());
+                        item.put("title", a.getTitle() != null ? a.getTitle() : "");
+                        item.put("sourceName", a.getSourceName() != null ? a.getSourceName() : "");
+                        item.put("publishedAt", a.getPublishedAt() != null ? a.getPublishedAt() : "");
+                        return item;
+                    })
+                    .toList();
+        }
+
+        // 6. 每日趋势
+        List<Map<String, Object>> dailyTrend = dailyCounts(eventId);
+
+        // 7. 事件摘要（LLM + 降级）
+        Map<String, Object> summary = new HashMap<>();
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("event_title", event.getTitle() != null ? event.getTitle() : "");
+            payload.put("event_keywords", event.getKeywords() != null ? event.getKeywords() : "");
+
+            List<Map<String, Object>> pyArticles = new ArrayList<>();
+            for (Map<String, Object> a : articleList.stream().limit(20).toList()) {
+                Map<String, Object> pa = new HashMap<>();
+                pa.put("title", a.get("title"));
+                pa.put("published_at", a.get("publishedAt"));
+                pa.put("source_name", a.get("sourceName"));
+
+                // 尝试取 summary，如果有
+                pa.put("summary", "");
+                pyArticles.add(pa);
+            }
+            payload.put("articles", pyArticles);
+
+            summary = pythonIntelligenceClient.getEventSummary(payload);
+        } catch (Exception e) {
+            summary.put("summary", "该事件为「" + (event.getTitle() != null ? event.getTitle() : "") + "」，"
+                    + "关键词：" + (event.getKeywords() != null ? event.getKeywords() : "") + "，"
+                    + "共涉及 " + event.getArticleCount() + " 篇报道。");
+            summary.put("time", "");
+            summary.put("location", "");
+            summary.put("cause", "");
+            summary.put("persons", "");
+            summary.put("key_steps", "");
+            summary.put("important_info", "");
+            summary.put("method", "fallback");
+        }
+
+        // 8. 组装响应
+        Map<String, Object> response = new HashMap<>();
+        response.put("event", EventDetailVO.from(event, cleanIds));
+        response.put("summary", summary);
+        response.put("sentiment", sentiment);
+        response.put("sourceDistribution", sourceDistribution);
+        response.put("dailyTrend", dailyTrend);
+        response.put("articles", articleList);
         return response;
     }
 

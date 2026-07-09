@@ -291,4 +291,35 @@ public class PythonIntelligenceClient {
             throw new IntelligenceServiceException("调用 Python 趋势预测服务失败", e);
         }
     }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getEventSummary(Map<String, Object> eventData) {
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/event/summary")
+                    .body(eventData)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                throw new IntelligenceServiceException("Python 事件摘要服务返回空响应");
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("summary", safeString(result.get("summary"), ""));
+            response.put("time", safeString(result.get("time"), ""));
+            response.put("location", safeString(result.get("location"), ""));
+            response.put("cause", safeString(result.get("cause"), ""));
+            response.put("persons", safeString(result.get("persons"), ""));
+            response.put("key_steps", safeString(result.get("key_steps"), ""));
+            response.put("important_info", safeString(result.get("important_info"), ""));
+            response.put("method", safeString(result.get("method"), "fallback"));
+            return response;
+
+        } catch (IntelligenceServiceException e) {
+            throw e;
+        } catch (RestClientException e) {
+            throw new IntelligenceServiceException("调用 Python 事件摘要服务失败", e);
+        }
+    }
 }

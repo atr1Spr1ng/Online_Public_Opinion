@@ -53,4 +53,9 @@ public class EventController {
                                @RequestParam(defaultValue = "7") int periods) {
         return ApiResult.success(eventService.forecastTrend(id, periods));
     }
+
+    @GetMapping("/{id}/full-report")
+    public ApiResult<?> fullReport(@PathVariable Long id) {
+        return ApiResult.success(eventService.fullReport(id));
+    }
 }

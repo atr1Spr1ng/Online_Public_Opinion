@@ -35,6 +35,7 @@
         <el-table-column prop="startTime" label="开始时间" width="170" />
         <el-table-column label="操作" width="330">
           <template #default="{ row }">
+            <el-button type="info" link @click="goDetail(row)">详情</el-button>
             <el-button type="primary" link @click="doTraceSource(row)">溯源</el-button>
             <el-button type="success" link @click="doAnalyzePath(row)">传播分析</el-button>
             <el-button type="warning" link @click="doGenerateReport(row)">报告</el-button>
@@ -122,11 +123,14 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { listEvents, clusterEvents, forecastTrend } from '@/api/event'
 import { traceSource, analyzePropagation } from '@/api/propagation'
 import { generateReport } from '@/api/report'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
+
+const router = useRouter()
 
 const loading = ref(false)
 const tableData = ref([])
@@ -191,6 +195,10 @@ async function fetchData() {
   } finally {
     loading.value = false
   }
+}
+
+function goDetail(row) {
+  router.push(`/event/${row.id}`)
 }
 
 function showClusterDialog() {

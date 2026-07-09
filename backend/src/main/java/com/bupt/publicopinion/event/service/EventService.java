@@ -21,4 +21,6 @@ public interface EventService {
     List<SimilarEventResult> findSimilarEvents(String keywords, int topK);
 
     Map<String, Object> forecastTrend(Long eventId, int periods);
+
+    Map<String, Object> fullReport(Long eventId);
 }
