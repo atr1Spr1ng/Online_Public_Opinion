@@ -34,4 +34,10 @@ public class EventController {
     public ApiResult<?> detail(@PathVariable Long id) {
         return ApiResult.success(eventService.getEvent(id));
     }
+
+    @GetMapping("/{id}/trend")
+    public ApiResult<?> trend(@PathVariable Long id,
+                               @RequestParam(defaultValue = "7") int periods) {
+        return ApiResult.success(eventService.forecastTrend(id, periods));
+    }
 }

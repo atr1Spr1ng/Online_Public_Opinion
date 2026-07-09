@@ -9,6 +9,7 @@ import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -254,6 +255,40 @@ public class PythonIntelligenceClient {
             throw e;
         } catch (RestClientException e) {
             throw new IntelligenceServiceException("调用 Python 主题分类服务失败", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> forecastTrend(List<Map<String, Object>> dailyCounts, int periods) {
+        Map<String, Object> body = Map.of(
+                "daily_counts", dailyCounts,
+                "periods", periods
+        );
+
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/trend/forecast")
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                throw new IntelligenceServiceException("Python 趋势预测服务返回空响应");
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("method", result.get("method"));
+            response.put("historical", result.get("historical"));
+            response.put("forecast", result.get("forecast"));
+            response.put("trend", result.get("trend"));
+            Object note = result.get("note");
+            response.put("note", note != null ? note : "");
+            return response;
+
+        } catch (IntelligenceServiceException e) {
+            throw e;
+        } catch (RestClientException e) {
+            throw new IntelligenceServiceException("调用 Python 趋势预测服务失败", e);
         }
     }
 }

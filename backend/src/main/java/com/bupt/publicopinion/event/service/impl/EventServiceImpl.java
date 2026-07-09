@@ -19,10 +19,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -196,5 +198,74 @@ public class EventServiceImpl implements EventService {
                 .toList();
 
         return EventDetailVO.from(event, articleIds);
+    }
+
+    @Override
+    public Map<String, Object> forecastTrend(Long eventId, int periods) {
+        Event event = eventMapper.selectById(eventId);
+        if (event == null) {
+            throw new EventNotFoundException("事件不存在: " + eventId);
+        }
+
+        List<Map<String, Object>> dailyCounts = dailyCounts(eventId);
+
+        Map<String, Object> result = pythonIntelligenceClient.forecastTrend(dailyCounts, periods);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("eventId", eventId);
+        response.put("eventTitle", event.getTitle());
+        response.put("method", result.get("method"));
+        response.put("historical", result.get("historical"));
+        response.put("forecast", result.get("forecast"));
+        response.put("trend", result.get("trend"));
+        response.put("note", result.get("note"));
+        return response;
+    }
+
+    /**
+     * 统计指定事件的文章每日数量（基于 MySQL event_article + article_clean 表）
+     */
+    private List<Map<String, Object>> dailyCounts(Long eventId) {
+        List<Long> cleanIds = eventArticleMapper.selectList(
+                new LambdaQueryWrapper<EventArticle>()
+                        .eq(EventArticle::getEventId, eventId)
+        ).stream().map(EventArticle::getCleanId).toList();
+
+        if (cleanIds.isEmpty()) return List.of();
+
+        List<ArticleClean> articles = articleCleanMapper.selectList(
+                new LambdaQueryWrapper<ArticleClean>()
+                        .in(ArticleClean::getId, cleanIds)
+                        .isNotNull(ArticleClean::getPublishedAt)
+        );
+
+        // 按日期分组统计
+        Map<LocalDate, Long> dateCounts = new LinkedHashMap<>();
+        for (ArticleClean a : articles) {
+            String publishedAt = a.getPublishedAt();
+            if (publishedAt == null || publishedAt.length() < 10) continue;
+            try {
+                LocalDate date = LocalDate.parse(publishedAt.substring(0, 10));
+                dateCounts.merge(date, 1L, Long::sum);
+            } catch (Exception ignored) {
+            }
+        }
+
+        // 排序并填充缺失日期
+        if (dateCounts.isEmpty()) return List.of();
+
+        List<LocalDate> sortedDates = new ArrayList<>(dateCounts.keySet());
+        sortedDates.sort(LocalDate::compareTo);
+        LocalDate start = sortedDates.get(0);
+        LocalDate end = sortedDates.get(sortedDates.size() - 1);
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("date", d.toString());
+            item.put("count", dateCounts.getOrDefault(d, 0L).intValue());
+            result.add(item);
+        }
+        return result;
     }
 }

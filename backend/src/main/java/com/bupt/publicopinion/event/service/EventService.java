@@ -13,4 +13,6 @@ public interface EventService {
     PageResult<EventVO> listEvents(long pageNum, long pageSize, String category);
 
     EventDetailVO getEvent(Long id);
+
+    Map<String, Object> forecastTrend(Long eventId, int periods);
 }
