@@ -15,7 +15,12 @@ public interface UserService {
     User findById(Long id);
 
     /**
-     * 创建用户（管理员预创建账号 / 预留注册扩展点）。
+     * 检查用户名是否已存在。
+     */
+    boolean existsByUsername(String username);
+
+    /**
+     * 创建用户。
      */
     User createUser(User user);
 

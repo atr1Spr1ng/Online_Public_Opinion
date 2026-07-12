@@ -3,17 +3,23 @@ package com.bupt.publicopinion.search.controller;
 import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.common.vo.PageResult;
+import com.bupt.publicopinion.content.entity.ArticleClean;
+import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
+import com.bupt.publicopinion.event.entity.Event;
+import com.bupt.publicopinion.event.mapper.EventMapper;
 import com.bupt.publicopinion.search.document.ArticleDocument;
 import com.bupt.publicopinion.search.service.SearchSyncService;
 import com.bupt.publicopinion.system.entity.UserKeyword;
 import com.bupt.publicopinion.system.service.UserPreferenceService;
 import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/search")
@@ -21,10 +27,27 @@ public class SearchController {
 
     private final SearchSyncService searchSyncService;
     private final UserPreferenceService userPreferenceService;
+    private final ArticleCleanMapper articleCleanMapper;
+    private final EventMapper eventMapper;
 
-    public SearchController(SearchSyncService searchSyncService, UserPreferenceService userPreferenceService) {
+    public SearchController(SearchSyncService searchSyncService, UserPreferenceService userPreferenceService,
+                            ArticleCleanMapper articleCleanMapper, EventMapper eventMapper) {
         this.searchSyncService = searchSyncService;
         this.userPreferenceService = userPreferenceService;
+        this.articleCleanMapper = articleCleanMapper;
+        this.eventMapper = eventMapper;
+    }
+
+    @PostMapping("/rebuild")
+    public ApiResult<Map<String, Object>> rebuildIndex() {
+        List<ArticleClean> allArticles = articleCleanMapper.selectList(null);
+        searchSyncService.rebuildIndex(allArticles);
+        List<Event> allEvents = eventMapper.selectList(null);
+        searchSyncService.indexEvents(allEvents);
+        return ApiResult.success(Map.of(
+                "articlesSynced", allArticles.size(),
+                "eventsSynced", allEvents.size()
+        ));
     }
 
     /**

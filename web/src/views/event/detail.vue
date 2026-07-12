@@ -278,18 +278,19 @@ function renderSentimentChart() {
   sentimentChart = echarts.init(sentimentChartRef.value)
 
   const s = data.value.sentiment
+  const items = [
+    { value: Math.round(s.positive * s.total), name: '正面', itemStyle: { color: '#67C23A' } },
+    { value: Math.round(s.neutral * s.total), name: '中立', itemStyle: { color: '#909399' } },
+    { value: Math.round(s.negative * s.total), name: '负面', itemStyle: { color: '#F56C6C' } },
+  ].filter(item => item.value > 0)
   sentimentChart.setOption({
     tooltip: { trigger: 'item', formatter: '{b}: {c}篇 ({d}%)' },
-    legend: { top: 5 },
+    legend: { show: false },
     series: [{
       type: 'pie',
       radius: ['45%', '72%'],
       label: { formatter: '{b}\n{d}%' },
-      data: [
-        { value: Math.round(s.positive * s.total), name: '正面', itemStyle: { color: '#67C23A' } },
-        { value: Math.round(s.neutral * s.total), name: '中立', itemStyle: { color: '#909399' } },
-        { value: Math.round(s.negative * s.total), name: '负面', itemStyle: { color: '#F56C6C' } },
-      ]
+      data: items
     }]
   })
 }
@@ -351,7 +352,7 @@ async function doAsk() {
   try {
     const res = await qaReport({
       question,
-      report: { event_id: data.value?.event?.id, title: data.value?.event?.title, keywords: data.value?.event?.keywords, lifecycle: data.value?.event?.lifecycle, article_count: data.value?.event?.articleCount, hotness: data.value?.event?.hotness, sentiment: data.value?.sentiment, article_titles: (data.value?.articles || []).map(a => a.title).slice(0, 10) }
+      report: { event_id: data.value?.event?.id, title: data.value?.event?.title, keywords: data.value?.event?.keywords, lifecycle: data.value?.event?.lifecycle, article_count: data.value?.event?.articleCount, hotness: data.value?.event?.hotness, sentiment: data.value?.sentiment, summary: data.value?.summary, article_titles: (data.value?.articles || []).map(a => a.title).slice(0, 10) }
     })
     const last = qaHistory.value[qaHistory.value.length - 1]
     if (res.code === 200) {

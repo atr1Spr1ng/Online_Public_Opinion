@@ -19,3 +19,7 @@ export function getSentimentResults(params) {
 export function getSentimentDetail(id) {
   return request({ url: `/analysis/sentiment/${id}`, method: 'get' })
 }
+
+export function deleteSentimentResult(id) {
+  return request({ url: `/analysis/sentiment/${id}`, method: 'delete' })
+}

@@ -51,3 +51,15 @@ export function crawlSingleUrl(data) {
 export function discoverNews(data) {
   return request({ url: '/crawler/news/discover', method: 'post', data })
 }
+
+export function searchByTopic(data) {
+  return request({ url: '/crawler/topics/search', method: 'post', data })
+}
+
+export function deleteArticle(id) {
+  return request({ url: `/crawler/articles/${id}`, method: 'delete' })
+}
+
+export function deleteTask(id) {
+  return request({ url: `/crawler/tasks/${id}`, method: 'delete' })
+}

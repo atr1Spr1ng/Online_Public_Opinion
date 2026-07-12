@@ -1,10 +1,12 @@
 package com.bupt.publicopinion.content.controller;
 
 import com.bupt.publicopinion.common.result.ApiResult;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.dto.CleanRequest;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.service.ContentService;
 import com.bupt.publicopinion.content.vo.CleanResult;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -46,10 +48,18 @@ public class ContentController {
     }
 
     @GetMapping("/clean")
-    public ApiResult<List<ArticleClean>> listCleanedArticles(
+    public ApiResult<PageResult<ArticleClean>> listCleanedArticles(
             @RequestParam(defaultValue = "1") long pageNum,
-            @RequestParam(defaultValue = "10") long pageSize
+            @RequestParam(defaultValue = "10") long pageSize,
+            @RequestParam(defaultValue = "false") boolean excludeAnalyzed,
+            @RequestParam(defaultValue = "false") boolean excludeDetected
     ) {
-        return ApiResult.success(contentService.listCleanedArticles(pageNum, pageSize));
+        return ApiResult.success(contentService.listCleanedArticles(pageNum, pageSize, excludeAnalyzed, excludeDetected));
+    }
+
+    @DeleteMapping("/clean/{id}")
+    public ApiResult<Void> deleteCleanedArticle(@PathVariable Long id) {
+        contentService.deleteCleanedArticle(id);
+        return ApiResult.success();
     }
 }

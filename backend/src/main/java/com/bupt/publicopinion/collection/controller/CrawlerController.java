@@ -3,19 +3,24 @@ package com.bupt.publicopinion.collection.controller;
 import com.bupt.publicopinion.collection.dto.NewsSourceRequest;
 import com.bupt.publicopinion.collection.dto.NewsDiscoverRequest;
 import com.bupt.publicopinion.collection.dto.NewsCrawlRequest;
+import com.bupt.publicopinion.collection.dto.TopicSearchRequest;
 import com.bupt.publicopinion.collection.entity.ArticleRaw;
 import com.bupt.publicopinion.collection.entity.CrawlTask;
 import com.bupt.publicopinion.collection.entity.NewsSource;
 import com.bupt.publicopinion.collection.service.CrawlerService;
 import com.bupt.publicopinion.collection.vo.BatchCrawlerTaskResult;
+import com.bupt.publicopinion.collection.vo.BatchTopicResult;
 import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
+import com.bupt.publicopinion.common.context.UserContext;
+import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.common.vo.PageResult;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -42,12 +47,14 @@ public class CrawlerController {
 
     @GetMapping("/health")
     public CrawlerHealthResult health() {
+        requireAdmin();
         return crawlerService.checkHealth();
     }
 
     @PostMapping("/news/crawl")
-    public NewsCrawlResult crawlNews(@Valid @RequestBody NewsCrawlRequest request) {
-        return crawlerService.crawlNews(request);
+    public ApiResult<ArticleRaw> crawlNews(@Valid @RequestBody NewsCrawlRequest request) {
+        ArticleRaw articleRaw = crawlerService.crawlAndSaveArticle(request);
+        return ApiResult.success(articleRaw);
     }
 
     @PostMapping("/news/discover")
@@ -61,31 +68,32 @@ public class CrawlerController {
     }
 
     @PostMapping("/tasks")
-    public CrawlerTaskSaveResult createCrawlTask(@Valid @RequestBody NewsDiscoverRequest request) {
-        return crawlerService.createCrawlTask(request);
+    public ApiResult<CrawlerTaskSaveResult> createCrawlTask(@Valid @RequestBody NewsDiscoverRequest request) {
+        requireAdmin();
+        return ApiResult.success(crawlerService.createCrawlTask(request));
     }
 
     @PostMapping("/tasks/source/{sourceId}")
-    public CrawlerTaskSaveResult createCrawlTaskBySource(
+    public ApiResult<CrawlerTaskSaveResult> createCrawlTaskBySource(
             @PathVariable Long sourceId,
             @RequestParam(defaultValue = "5") Integer limit
     ) {
-        return crawlerService.createCrawlTaskBySource(sourceId, limit);
+        return ApiResult.success(crawlerService.createCrawlTaskBySource(sourceId, limit));
     }
 
     @PostMapping("/tasks/all-enabled")
-    public BatchCrawlerTaskResult createCrawlTasksForAllEnabledSources(
+    public ApiResult<BatchCrawlerTaskResult> createCrawlTasksForAllEnabledSources(
             @RequestParam(defaultValue = "5") Integer limit
     ) {
-        return crawlerService.createCrawlTasksForAllEnabledSources(limit);
+        return ApiResult.success(crawlerService.createCrawlTasksForAllEnabledSources(limit));
     }
 
     @GetMapping("/tasks")
-    public PageResult<CrawlTask> listCrawlTasks(
+    public ApiResult<PageResult<CrawlTask>> listCrawlTasks(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "10") long pageSize
     ) {
-        return crawlerService.listCrawlTasks(pageNum, pageSize);
+        return ApiResult.success(crawlerService.listCrawlTasks(pageNum, pageSize));
     }
 
     @GetMapping("/tasks/{taskId}")
@@ -94,28 +102,43 @@ public class CrawlerController {
     }
 
     @GetMapping("/articles")
-    public PageResult<ArticleRaw> listArticles(
+    public ApiResult<PageResult<ArticleRaw>> listArticles(
             @RequestParam(defaultValue = "1") long pageNum,
-            @RequestParam(defaultValue = "10") long pageSize
+            @RequestParam(defaultValue = "10") long pageSize,
+            @RequestParam(defaultValue = "false") boolean excludeCleaned
     ) {
-        return crawlerService.listArticles(pageNum, pageSize);
+        return ApiResult.success(crawlerService.listArticles(pageNum, pageSize, excludeCleaned));
+    }
+
+    @DeleteMapping("/articles/{id}")
+    public ApiResult<Void> deleteArticle(@PathVariable Long id) {
+        crawlerService.deleteArticle(id);
+        return ApiResult.success();
+    }
+
+    @DeleteMapping("/tasks/{id}")
+    public ApiResult<Void> deleteCrawlTask(@PathVariable Long id) {
+        crawlerService.deleteCrawlTask(id);
+        return ApiResult.success();
     }
 
     @GetMapping("/sources")
-    public PageResult<NewsSource> listNewsSources(
+    public ApiResult<PageResult<NewsSource>> listNewsSources(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "10") long pageSize
     ) {
-        return crawlerService.listNewsSources(pageNum, pageSize);
+        return ApiResult.success(crawlerService.listNewsSources(pageNum, pageSize));
     }
 
     @PostMapping("/sources")
     public NewsSource createNewsSource(@Valid @RequestBody NewsSourceRequest request) {
+        requireAdmin();
         return crawlerService.createNewsSource(request);
     }
 
     @PutMapping("/sources/{sourceId}")
     public NewsSource updateNewsSource(@PathVariable Long sourceId, @Valid @RequestBody NewsSourceRequest request) {
+        requireAdmin();
         return crawlerService.updateNewsSource(sourceId, request);
     }
 
@@ -124,11 +147,25 @@ public class CrawlerController {
             @PathVariable Long sourceId,
             @RequestParam Integer status
     ) {
+        requireAdmin();
         return crawlerService.updateNewsSourceStatus(sourceId, status);
     }
 
     @PostMapping("/news/test")
     public NewsCrawlResult testNewsCrawler(@Valid @RequestBody NewsCrawlRequest request) {
         return crawlerService.crawlNews(request);
+    }
+
+    @PostMapping("/topics/search")
+    public ApiResult<BatchTopicResult> searchAndCollectByTopic(@Valid @RequestBody TopicSearchRequest request) {
+        BatchTopicResult result = crawlerService.searchAndCollectByTopic(request);
+        return ApiResult.success(result);
+    }
+
+    private void requireAdmin() {
+        String role = UserContext.get().role();
+        if (!"ADMIN".equals(role)) {
+            throw new com.bupt.publicopinion.common.exception.AccessDeniedException("无权访问");
+        }
     }
 }

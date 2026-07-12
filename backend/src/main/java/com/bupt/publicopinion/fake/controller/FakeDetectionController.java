@@ -1,10 +1,12 @@
 package com.bupt.publicopinion.fake.controller;
 
 import com.bupt.publicopinion.common.result.ApiResult;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.fake.dto.FakeDetectionRequest;
 import com.bupt.publicopinion.fake.service.FakeDetectionService;
 import com.bupt.publicopinion.fake.vo.FakeDetectionResult;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -46,11 +48,17 @@ public class FakeDetectionController {
     }
 
     @GetMapping
-    public ApiResult<List<FakeDetectionResult>> listResults(
+    public ApiResult<PageResult<FakeDetectionResult>> listResults(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "10") long pageSize,
             @RequestParam(required = false) Boolean isFake
     ) {
         return ApiResult.success(fakeDetectionService.listResults(pageNum, pageSize, isFake));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResult<Void> deleteFakeResult(@PathVariable Long id) {
+        fakeDetectionService.deleteFakeResult(id);
+        return ApiResult.success();
     }
 }

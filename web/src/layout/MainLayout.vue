@@ -22,8 +22,8 @@
             <el-icon><Collection /></el-icon>
             <span>数据采集</span>
           </template>
-          <el-menu-item index="/crawler/sources">新闻源管理</el-menu-item>
-          <el-menu-item index="/crawler/tasks">采集任务</el-menu-item>
+          <el-menu-item index="/crawler/source-collect">按新闻源采集</el-menu-item>
+          <el-menu-item index="/crawler/topic-collect">按话题采集</el-menu-item>
           <el-menu-item index="/crawler/articles">原始文章</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/content/clean">
@@ -34,25 +34,13 @@
           <el-icon><TrendCharts /></el-icon>
           <span>情感分析</span>
         </el-menu-item>
-        <el-menu-item index="/event">
-          <el-icon><Opportunity /></el-icon>
-          <span>事件管理</span>
-        </el-menu-item>
-        <el-sub-menu index="propagation">
-          <template #title>
-            <el-icon><Share /></el-icon>
-            <span>传播分析</span>
-          </template>
-          <el-menu-item index="/propagation/source">事件溯源</el-menu-item>
-          <el-menu-item index="/propagation/path">传播路径</el-menu-item>
-        </el-sub-menu>
         <el-menu-item index="/fake">
           <el-icon><WarningFilled /></el-icon>
           <span>虚假检测</span>
         </el-menu-item>
-        <el-menu-item index="/report">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>舆情报告</span>
+        <el-menu-item index="/event">
+          <el-icon><Opportunity /></el-icon>
+          <span>事件管理</span>
         </el-menu-item>
         <el-menu-item index="/search">
           <el-icon><Search /></el-icon>
@@ -98,6 +86,7 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const isCollapse = ref(false)
+const isAdmin = computed(() => userStore.userInfo?.role === 'ADMIN')
 const activeMenu = computed(() => route.path.replace(/\/\d+$/, ''))
 
 function handleLogout() {

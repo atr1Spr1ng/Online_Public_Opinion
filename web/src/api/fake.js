@@ -15,3 +15,7 @@ export function getFakeResults(params) {
 export function getFakeDetail(id) {
   return request({ url: `/fake/${id}`, method: 'get' })
 }
+
+export function deleteFakeResult(id) {
+  return request({ url: `/fake/${id}`, method: 'delete' })
+}

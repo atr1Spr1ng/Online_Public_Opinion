@@ -12,7 +12,7 @@ export const useUserStore = defineStore('user', {
       const res = await loginApi({ username, password })
       this.token = res.data.accessToken
       this.refreshToken = res.data.refreshToken
-      this.userInfo = res.data.userInfo
+      this.userInfo = res.data.user
       localStorage.setItem('token', this.token)
       localStorage.setItem('refreshToken', this.refreshToken)
       return res

@@ -16,6 +16,10 @@ export function getReportDetail(id) {
   return request({ url: `/report/${id}`, method: 'get' })
 }
 
+export function deleteReport(id) {
+  return request({ url: `/report/${id}`, method: 'delete' })
+}
+
 export function qaReport(data) {
   return request({ url: '/report/qa', method: 'post', data })
 }

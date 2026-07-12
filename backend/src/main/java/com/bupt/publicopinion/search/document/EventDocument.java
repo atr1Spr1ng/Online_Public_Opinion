@@ -1,13 +1,14 @@
 package com.bupt.publicopinion.search.document;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.elasticsearch.annotations.DateFormat;
 import org.springframework.data.elasticsearch.annotations.Document;
 import org.springframework.data.elasticsearch.annotations.Field;
 import org.springframework.data.elasticsearch.annotations.FieldType;
 
 import java.time.LocalDateTime;
 
-@Document(indexName = "events", createIndex = false)
+@Document(indexName = "events", createIndex = true)
 public class EventDocument {
 
     @Id
@@ -31,13 +32,13 @@ public class EventDocument {
     @Field(type = FieldType.Keyword)
     private String category;
 
-    @Field(type = FieldType.Date)
+    @Field(type = FieldType.Date, format = DateFormat.date_hour_minute_second)
     private LocalDateTime startTime;
 
-    @Field(type = FieldType.Date)
+    @Field(type = FieldType.Date, format = DateFormat.date_hour_minute_second)
     private LocalDateTime endTime;
 
-    @Field(type = FieldType.Date)
+    @Field(type = FieldType.Date, format = DateFormat.date_hour_minute_second)
     private LocalDateTime createTime;
 
     public EventDocument() {}

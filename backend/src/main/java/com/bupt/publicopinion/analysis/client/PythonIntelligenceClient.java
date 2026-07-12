@@ -3,6 +3,7 @@ package com.bupt.publicopinion.analysis.client;
 import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.analysis.vo.SentimentResult;
 import com.bupt.publicopinion.fake.exception.FakeDetectionException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -17,9 +18,11 @@ import java.util.Map;
 public class PythonIntelligenceClient {
 
     private final RestClient intelligenceRestClient;
+    private final ObjectMapper objectMapper;
 
-    public PythonIntelligenceClient(RestClient intelligenceRestClient) {
+    public PythonIntelligenceClient(RestClient intelligenceRestClient, ObjectMapper objectMapper) {
         this.intelligenceRestClient = intelligenceRestClient;
+        this.objectMapper = objectMapper;
     }
 
     public SentimentResult analyzeSentiment(String title, String content) {
@@ -95,14 +98,7 @@ public class PythonIntelligenceClient {
     private String toFeaturesJson(Object features) {
         if (features instanceof List<?> list && !list.isEmpty()) {
             try {
-                // Simple JSON serialization of features list
-                StringBuilder sb = new StringBuilder("[");
-                for (int i = 0; i < list.size(); i++) {
-                    if (i > 0) sb.append(",");
-                    sb.append(list.get(i).toString());
-                }
-                sb.append("]");
-                return sb.toString();
+                return objectMapper.writeValueAsString(list);
             } catch (Exception e) {
                 return "[]";
             }

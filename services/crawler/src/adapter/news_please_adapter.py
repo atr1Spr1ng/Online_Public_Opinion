@@ -22,14 +22,33 @@ class NewsPleaseAdapter:
             timeout=crawler_settings.request_timeout_seconds,
             headers={"User-Agent": crawler_settings.user_agent},
         )
+        self._browser = None
+        self._playwright = None
 
     def crawl(self, url: str) -> CrawlResult:
+        html, final_url, status_code = self._fetch_with_httpx(url)
+        result = self._extract(html, url, final_url, status_code)
+
+        # JS rendering fallback: if both news-please and readability failed
+        if result.content_length == 0:
+            try:
+                js_html = self._render_with_browser(url)
+                if js_html and js_html != html:
+                    result = self._extract(js_html, url, final_url, status_code)
+                    result.engine = "playwright"
+            except CrawlerException:
+                pass
+
+        return result
+
+    def _fetch_with_httpx(self, url: str) -> tuple[str, str, int]:
         try:
             with self._client.stream("GET", url) as response:
                 response.raise_for_status()
                 html = self._read_html(response)
-                final_url = str(response.url)
-                status_code = response.status_code
+                final = str(response.url)
+                code = response.status_code
+            return html, final, code
         except httpx.TimeoutException as exc:
             raise CrawlerException("抓取超时") from exc
         except httpx.HTTPStatusError as exc:
@@ -39,10 +58,17 @@ class NewsPleaseAdapter:
         except httpx.RequestError as exc:
             raise CrawlerException(f"无法访问目标网站: {exc}") from exc
 
+    def _extract(self, html: str, original_url: str, final_url: str, status_code: int) -> CrawlResult:
         try:
             article = NewsPlease.from_html(html, url=final_url)
-        except Exception as exc:
-            raise CrawlerException("news-please 解析网页失败") from exc
+        except Exception:
+            article = NewsPlease.from_html("", url=final_url)
+            article.title = None
+            article.maintext = None
+            article.authors = []
+            article.date_publish = None
+            article.image_url = None
+            article.language = None
 
         fallback_title, fallback_content = self._extract_fallback_fields(html)
         title = article.title or fallback_title
@@ -52,7 +78,7 @@ class NewsPleaseAdapter:
 
         return CrawlResult(
             engine="news-please",
-            original_url=url,
+            original_url=original_url,
             final_url=final_url,
             status_code=status_code,
             title=title,
@@ -66,6 +92,51 @@ class NewsPleaseAdapter:
             language=article.language,
             fetched_at=datetime.now(timezone.utc),
         )
+
+    def _render_with_browser(self, url: str) -> str:
+        import subprocess
+        import sys
+
+        # Use subprocess to run a tiny standalone script — avoids
+        # threading complications from running asyncio inside uvicorn.
+        script = r"""
+import sys, json
+from playwright.sync_api import sync_playwright
+url = sys.argv[1]
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    page = browser.new_page()
+    try:
+        page.goto(url, wait_until='networkidle', timeout=30000)
+        html = page.content()
+    finally:
+        browser.close()
+try:
+    print(json.dumps({"ok": True, "html": html}))
+except Exception as e:
+    print(json.dumps({"ok": False, "error": str(e)}))
+"""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script, url],
+                capture_output=True,
+                text=True,
+                timeout=self._settings.request_timeout_seconds + 15,
+            )
+        except subprocess.TimeoutExpired:
+            raise CrawlerException("Playwright 渲染超时")
+
+        if result.returncode != 0:
+            raise CrawlerException(f"Playwright 渲染失败: {result.stderr.strip() or '未知错误'}")
+
+        import json
+        data = json.loads(result.stdout.strip())
+        if not data.get("ok"):
+            raise CrawlerException(f"Playwright 渲染失败: {data.get('error', '未知错误')}")
+        return data["html"]
+
+    def close(self) -> None:
+        self._client.close()
 
     @staticmethod
     def _build_extract_status(content_length: int) -> tuple[str, str]:

@@ -1,5 +1,6 @@
 package com.bupt.publicopinion.fake.service;
 
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.fake.dto.FakeDetectionRequest;
 import com.bupt.publicopinion.fake.vo.FakeDetectionResult;
 
@@ -13,5 +14,7 @@ public interface FakeDetectionService {
 
     FakeDetectionResult getResult(Long id);
 
-    List<FakeDetectionResult> listResults(long pageNum, long pageSize, Boolean isFake);
+    PageResult<FakeDetectionResult> listResults(long pageNum, long pageSize, Boolean isFake);
+
+    void deleteFakeResult(Long id);
 }

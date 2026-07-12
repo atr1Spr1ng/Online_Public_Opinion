@@ -23,4 +23,8 @@ public interface EventService {
     Map<String, Object> forecastTrend(Long eventId, int periods);
 
     Map<String, Object> fullReport(Long eventId);
+
+    List<EventVO> getMyFeedEvents(Long userId);
+
+    void deleteEvent(Long id);
 }

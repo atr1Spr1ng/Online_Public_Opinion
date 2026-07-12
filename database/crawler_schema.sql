@@ -72,8 +72,7 @@ VALUES
     ('新浪新闻', 'portal', 'https://news.sina.com.cn/', 1),
     ('中国新闻网', 'official', 'https://www.chinanews.com.cn/', 1),
     ('澎湃新闻', 'original', 'https://www.thepaper.cn/', 1),
-    ('界面新闻', 'original', 'https://www.jiemian.com/', 1),
-    ('人民网', 'official', 'https://www.people.com.cn/', 1)
+    ('界面新闻', 'original', 'https://www.jiemian.com/', 1)
 ON DUPLICATE KEY UPDATE
     source_name = VALUES(source_name),
     source_type = VALUES(source_type),

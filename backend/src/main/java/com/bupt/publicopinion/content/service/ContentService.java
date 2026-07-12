@@ -1,5 +1,6 @@
 package com.bupt.publicopinion.content.service;
 
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.dto.CleanRequest;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.vo.CleanResult;
@@ -14,5 +15,7 @@ public interface ContentService {
 
     ArticleClean getCleanedArticle(Long id);
 
-    List<ArticleClean> listCleanedArticles(long pageNum, long pageSize);
+    PageResult<ArticleClean> listCleanedArticles(long pageNum, long pageSize, boolean excludeAnalyzed, boolean excludeDetected);
+
+    void deleteCleanedArticle(Long id);
 }

@@ -16,6 +16,7 @@ import com.bupt.publicopinion.report.dto.ReportGenerateRequest;
 import com.bupt.publicopinion.report.entity.Report;
 import com.bupt.publicopinion.report.exception.ReportServiceException;
 import com.bupt.publicopinion.report.mapper.ReportMapper;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.report.service.ReportService;
 import com.bupt.publicopinion.report.vo.QaResultVO;
 import com.bupt.publicopinion.report.vo.ReportVO;
@@ -151,15 +152,25 @@ public class ReportServiceImpl implements ReportService {
     }
 
     @Override
-    public List<ReportVO> listReports(long pageNum, long pageSize) {
+    public PageResult<ReportVO> listReports(long pageNum, long pageSize) {
         Page<Report> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Report> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByDesc(Report::getCreateTime);
         Page<Report> result = reportMapper.selectPage(page, wrapper);
-        return result.getRecords().stream()
+        List<ReportVO> records = result.getRecords().stream()
                 .map(r -> new ReportVO(r.getId(), r.getEventId(), r.getTitle(),
                         r.getContentJson(), r.getCreateTime()))
                 .collect(Collectors.toList());
+        return new PageResult<>(records, result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public void deleteReport(Long id) {
+        Report report = reportMapper.selectById(id);
+        if (report == null) {
+            throw new ReportServiceException("报告不存在: " + id);
+        }
+        reportMapper.deleteById(id);
     }
 
     @Override
@@ -167,7 +178,9 @@ public class ReportServiceImpl implements ReportService {
         Map<String, Object> body = new HashMap<>();
         body.put("question", request.question());
 
-        if (request.reportId() != null) {
+        if (request.report() != null && !request.report().isEmpty()) {
+            body.put("report", request.report());
+        } else if (request.reportId() != null) {
             Report report = reportMapper.selectById(request.reportId());
             if (report != null) {
                 body.put("report", report.getContentJson());
@@ -176,7 +189,6 @@ public class ReportServiceImpl implements ReportService {
 
         PythonReportClient.QaResult result = pythonReportClient.ask(body);
 
-        // 如果 report.json 是字符串，需要特殊处理
         return new QaResultVO(result.answer(), result.source());
     }
 

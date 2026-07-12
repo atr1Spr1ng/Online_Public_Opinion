@@ -5,7 +5,9 @@ import com.bupt.publicopinion.analysis.entity.ArticleSentiment;
 import com.bupt.publicopinion.analysis.service.AnalysisService;
 import com.bupt.publicopinion.analysis.vo.SentimentResult;
 import com.bupt.publicopinion.common.result.ApiResult;
+import com.bupt.publicopinion.common.vo.PageResult;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -47,11 +49,17 @@ public class AnalysisController {
     }
 
     @GetMapping("/sentiment")
-    public ApiResult<List<ArticleSentiment>> listSentimentResults(
+    public ApiResult<PageResult<ArticleSentiment>> listSentimentResults(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "10") long pageSize,
             @RequestParam(required = false) String sentiment
     ) {
         return ApiResult.success(analysisService.listSentimentResults(pageNum, pageSize, sentiment));
+    }
+
+    @DeleteMapping("/sentiment/{id}")
+    public ApiResult<Void> deleteSentimentResult(@PathVariable Long id) {
+        analysisService.deleteSentimentResult(id);
+        return ApiResult.success();
     }
 }

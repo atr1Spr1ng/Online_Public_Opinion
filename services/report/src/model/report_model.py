@@ -14,6 +14,16 @@ class TimeSeriesItem(BaseModel):
     count: int
 
 
+class SummaryData(BaseModel):
+    summary: str = ""
+    time: str = ""
+    location: str = ""
+    cause: str = ""
+    persons: str = ""
+    key_steps: str = ""
+    important_info: str = ""
+
+
 class ReportData(BaseModel):
     event_id: int = 0
     title: str = ""
@@ -26,6 +36,7 @@ class ReportData(BaseModel):
     sentiment: SentimentStats = Field(default_factory=SentimentStats)
     timeline: list[TimeSeriesItem] = []
     article_titles: list[str] = []
+    summary: SummaryData = Field(default_factory=SummaryData)
 
     @classmethod
     def parse(cls, data: Any) -> "ReportData | None":
@@ -50,6 +61,17 @@ class ReportData(BaseModel):
                 articles_data = data.get("articles", data.get("article_titles", []))
                 article_titles = [str(a) for a in articles_data]
 
+                summary_data = data.get("summary", {}) or {}
+                summary = SummaryData(
+                    summary=str(summary_data.get("summary", "")),
+                    time=str(summary_data.get("time", "")),
+                    location=str(summary_data.get("location", "")),
+                    cause=str(summary_data.get("cause", "")),
+                    persons=str(summary_data.get("persons", "")),
+                    key_steps=str(summary_data.get("key_steps", "")),
+                    important_info=str(summary_data.get("important_info", "")),
+                )
+
                 return cls(
                     event_id=int(data.get("eventId", data.get("event_id", 0))),
                     title=str(data.get("title", "")),
@@ -62,6 +84,7 @@ class ReportData(BaseModel):
                     sentiment=sentiment,
                     timeline=timeline,
                     article_titles=article_titles,
+                    summary=summary,
                 )
             except (TypeError, ValueError):
                 return None

@@ -45,6 +45,14 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public boolean existsByUsername(String username) {
+        return userMapper.selectCount(
+                new LambdaQueryWrapper<User>()
+                        .eq(User::getUsername, username)
+        ) > 0;
+    }
+
+    @Override
     public User createUser(User user) {
         user.setPassword(passwordEncoder.encode(user.getPassword()));
         user.setStatus(1);

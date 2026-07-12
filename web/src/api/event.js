@@ -19,3 +19,11 @@ export function forecastTrend(id, params) {
 export function getEventReport(id) {
   return request({ url: `/events/${id}/full-report`, method: 'get' })
 }
+
+export function getMyFeedEvents() {
+  return request({ url: '/events/my-feed', method: 'get' })
+}
+
+export function deleteEvent(id) {
+  return request({ url: `/events/${id}`, method: 'delete' })
+}

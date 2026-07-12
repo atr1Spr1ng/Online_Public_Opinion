@@ -84,6 +84,26 @@ class QaService:
             f"负面{report.sentiment.negative:.0%} / "
             f"中立{report.sentiment.neutral:.0%}",
         ]
+        s = report.summary
+        if s.summary or s.cause or s.key_steps:
+            summary_parts = []
+            if s.summary:
+                summary_parts.append(f"事件概述：{s.summary}")
+            if s.time:
+                summary_parts.append(f"时间：{s.time}")
+            if s.location:
+                summary_parts.append(f"地点：{s.location}")
+            if s.cause:
+                summary_parts.append(f"起因：{s.cause}")
+            if s.persons:
+                summary_parts.append(f"涉事人物：{s.persons}")
+            if s.key_steps:
+                summary_parts.append(f"关键步骤：{s.key_steps}")
+            if s.important_info:
+                summary_parts.append(f"重要信息：{s.important_info}")
+            if summary_parts:
+                parts.append("--- AI 摘要 ---")
+                parts.extend(summary_parts)
         if report.article_titles:
             parts.append(f"相关文章：{'; '.join(report.article_titles[:10])}")
         return "\n".join(parts)

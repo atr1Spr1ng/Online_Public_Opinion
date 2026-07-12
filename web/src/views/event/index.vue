@@ -4,10 +4,15 @@
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span>舆情事件管理</span>
-          <el-button type="primary" @click="showClusterDialog" :loading="clustering">
-            <el-icon><DataAnalysis /></el-icon>
-            执行聚类分析
-          </el-button>
+          <div style="display:flex;gap:8px">
+            <el-button type="danger" @click="batchDeleteEvents" :disabled="!selectedRows.length">
+              批量删除 ({{ selectedRows.length }})
+            </el-button>
+            <el-button type="primary" @click="showClusterDialog" :loading="clustering">
+              <el-icon><DataAnalysis /></el-icon>
+              执行聚类分析
+            </el-button>
+          </div>
         </div>
       </template>
       <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center">
@@ -21,7 +26,8 @@
           <el-radio-button value="time">时间</el-radio-button>
         </el-radio-group>
       </div>
-      <el-table :data="tableData" v-loading="loading" border stripe>
+      <el-table :data="tableData" v-loading="loading" border stripe @selection-change="val => selectedRows = val">
+        <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="title" label="事件标题" min-width="200" show-overflow-tooltip />
         <el-table-column prop="keywords" label="关键词" width="200" show-overflow-tooltip />
@@ -57,6 +63,11 @@
             <el-button type="success" link @click="doAnalyzePath(row)">传播分析</el-button>
             <el-button type="warning" link @click="doGenerateReport(row)">报告</el-button>
             <el-button type="danger" link @click="doForecastTrend(row)">趋势预测</el-button>
+            <el-popconfirm title="确定删除该事件？" @confirm="handleDelete(row)">
+              <template #reference>
+                <el-button type="danger" link>删除</el-button>
+              </template>
+            </el-popconfirm>
           </template>
         </el-table-column>
       </el-table>
@@ -115,6 +126,37 @@
       <div v-if="pathResult?.nodes?.length" ref="pathGraphRef" style="width:100%;height:400px"></div>
     </el-dialog>
 
+    <el-dialog v-model="reportVisible" title="舆情报告" width="700px" @opened="renderReportTimeline">
+      <template v-if="reportData">
+        <div v-if="parseReportContent(reportData.contentJson).title">
+          <el-descriptions :column="2" border style="margin-bottom:16px">
+            <el-descriptions-item label="报告ID">{{ reportData.id }}</el-descriptions-item>
+            <el-descriptions-item label="事件ID">{{ reportData.eventId }}</el-descriptions-item>
+            <el-descriptions-item label="标题" :span="2">{{ parseReportContent(reportData.contentJson).title }}</el-descriptions-item>
+            <el-descriptions-item label="生命周期">
+              <el-tag>{{ parseReportContent(reportData.contentJson).lifecycle }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="热度">{{ parseReportContent(reportData.contentJson).hotness }}</el-descriptions-item>
+            <el-descriptions-item label="文章数">{{ parseReportContent(reportData.contentJson).articleCount }}</el-descriptions-item>
+            <el-descriptions-item label="关键词" :span="2">{{ parseReportContent(reportData.contentJson).keywords }}</el-descriptions-item>
+          </el-descriptions>
+
+          <el-divider>情感分析</el-divider>
+          <el-row :gutter="20" v-if="parseReportContent(reportData.contentJson).sentiment">
+            <el-col :span="8"><el-statistic title="正面" :value="(parseReportContent(reportData.contentJson).sentiment.positive * 100).toFixed(1)" suffix="%" /></el-col>
+            <el-col :span="8"><el-statistic title="负面" :value="(parseReportContent(reportData.contentJson).sentiment.negative * 100).toFixed(1)" suffix="%" /></el-col>
+            <el-col :span="8"><el-statistic title="中立" :value="(parseReportContent(reportData.contentJson).sentiment.neutral * 100).toFixed(1)" suffix="%" /></el-col>
+          </el-row>
+
+          <el-divider v-if="parseReportContent(reportData.contentJson).timeline?.length">时间线</el-divider>
+          <div v-if="parseReportContent(reportData.contentJson).timeline?.length" ref="reportTimelineRef" style="width:100%;height:250px"></div>
+
+          <el-divider>相关文章</el-divider>
+          <el-tag v-for="(a, idx) in (parseReportContent(reportData.contentJson).articles || [])" :key="idx" style="margin:4px">{{ a }}</el-tag>
+        </div>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="trendVisible" :title="'趋势预测：' + trendTitle" width="750px" @opened="renderTrendChart">
       <div v-if="trendLoading" style="text-align:center;padding:40px">
         <el-icon class="is-loading" :size="32"><Loading /></el-icon>
@@ -138,7 +180,7 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { listEvents, clusterEvents, forecastTrend } from '@/api/event'
+import { listEvents, clusterEvents, forecastTrend, deleteEvent } from '@/api/event'
 import { traceSource, analyzePropagation } from '@/api/propagation'
 import { generateReport } from '@/api/report'
 import { ElMessage } from 'element-plus'
@@ -148,6 +190,7 @@ const router = useRouter()
 
 const loading = ref(false)
 const tableData = ref([])
+const selectedRows = ref([])
 const total = ref(0)
 const pageNum = ref(1)
 const pageSize = ref(10)
@@ -332,11 +375,42 @@ function renderPathGraph() {
   })
 }
 
+const reportVisible = ref(false)
+const reportData = ref(null)
+const reportTimelineRef = ref(null)
+let reportChart = null
+
 async function doGenerateReport(row) {
   try {
     const res = await generateReport({ eventId: row.id })
-    ElMessage.success(`报告已生成 ID=${res.data?.id || '?'}`)
+    reportData.value = res.data
+    reportVisible.value = true
+    await nextTick()
+    renderReportTimeline()
   } catch (e) { ElMessage.error(e.message) }
+}
+
+function parseReportContent(json) {
+  try { return JSON.parse(json || '{}') }
+  catch { return {} }
+}
+
+function renderReportTimeline() {
+  if (!reportTimelineRef.value || !reportData.value) return
+  const content = parseReportContent(reportData.value.contentJson)
+  if (!content.timeline?.length) return
+  if (reportChart) reportChart.dispose()
+  reportChart = echarts.init(reportTimelineRef.value)
+  reportChart.setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: content.timeline.map(t => t.date) },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [{
+      type: 'line', data: content.timeline.map(t => t.count),
+      smooth: true, areaStyle: { opacity: 0.3 },
+      itemStyle: { color: '#409EFF' }
+    }]
+  })
 }
 
 async function doForecastTrend(row) {
@@ -449,6 +523,27 @@ function renderTrendChart() {
 
   chart.setOption(option)
   window.addEventListener('resize', () => chart.resize())
+}
+
+async function handleDelete(row) {
+  try {
+    await deleteEvent(row.id)
+    ElMessage.success('事件已删除')
+    fetchData()
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+async function batchDeleteEvents() {
+  const rows = [...selectedRows.value]
+  if (!rows.length) return
+  try {
+    for (const row of rows) {
+      await deleteEvent(row.id)
+    }
+    ElMessage.success(`批量删除 ${rows.length} 个事件完成`)
+    selectedRows.value = []
+    fetchData()
+  } catch (e) { ElMessage.error(e.message) }
 }
 
 onMounted(fetchData)

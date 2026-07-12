@@ -9,6 +9,7 @@ import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.analysis.mapper.ArticleSentimentMapper;
 import com.bupt.publicopinion.analysis.service.AnalysisService;
 import com.bupt.publicopinion.analysis.vo.SentimentResult;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,12 @@ public class AnalysisServiceImpl implements AnalysisService {
         if (clean == null) {
             throw new IntelligenceServiceException("清洗后的文章不存在: " + request.cleanId());
         }
+
+        // 删除旧结果，确保重新分析时不会重复
+        articleSentimentMapper.delete(
+                new LambdaQueryWrapper<ArticleSentiment>()
+                        .eq(ArticleSentiment::getCleanId, request.cleanId())
+        );
 
         SentimentResult result = pythonIntelligenceClient.analyzeSentiment(
                 clean.getTitle(), clean.getContent()
@@ -74,7 +81,7 @@ public class AnalysisServiceImpl implements AnalysisService {
     }
 
     @Override
-    public List<ArticleSentiment> listSentimentResults(long pageNum, long pageSize, String sentiment) {
+    public PageResult<ArticleSentiment> listSentimentResults(long pageNum, long pageSize, String sentiment) {
         Page<ArticleSentiment> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<ArticleSentiment> wrapper = new LambdaQueryWrapper<>();
         if (sentiment != null && !sentiment.isBlank()) {
@@ -82,7 +89,16 @@ public class AnalysisServiceImpl implements AnalysisService {
         }
         wrapper.orderByDesc(ArticleSentiment::getCreateTime);
         Page<ArticleSentiment> result = articleSentimentMapper.selectPage(page, wrapper);
-        return result.getRecords();
+        return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public void deleteSentimentResult(Long id) {
+        ArticleSentiment sentiment = articleSentimentMapper.selectById(id);
+        if (sentiment == null) {
+            throw new IntelligenceServiceException("情感分析结果不存在: " + id);
+        }
+        articleSentimentMapper.deleteById(id);
     }
 
     private ArticleSentiment saveSentimentResult(Long cleanId, SentimentResult result) {

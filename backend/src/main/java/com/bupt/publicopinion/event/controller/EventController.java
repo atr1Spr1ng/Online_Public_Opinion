@@ -1,5 +1,6 @@
 package com.bupt.publicopinion.event.controller;
 
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.event.dto.EventClusterRequest;
 import com.bupt.publicopinion.event.dto.SimilarEventRequest;
@@ -7,6 +8,7 @@ import com.bupt.publicopinion.event.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -58,5 +60,20 @@ public class EventController {
     @GetMapping("/{id}/full-report")
     public ApiResult<?> fullReport(@PathVariable Long id) {
         return ApiResult.success(eventService.fullReport(id));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResult<Void> deleteEvent(@PathVariable Long id) {
+        eventService.deleteEvent(id);
+        return ApiResult.success();
+    }
+
+    @GetMapping("/my-feed")
+    public ApiResult<?> myFeed() {
+        UserContext.UserContextInfo user = UserContext.get();
+        if (user == null || user.userId() == null) {
+            return ApiResult.success(List.of());
+        }
+        return ApiResult.success(eventService.getMyFeedEvents(user.userId()));
     }
 }

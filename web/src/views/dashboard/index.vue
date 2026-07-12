@@ -8,17 +8,17 @@
     </el-row>
 
     <el-row :gutter="20" style="margin-top:20px">
-      <el-col :span="12">
+      <el-col v-if="isAdmin" :span="12">
         <el-card>
           <template #header><span>系统状态</span></template>
           <el-descriptions :column="1" border>
-            <el-descriptions-item v-for="s in serviceStatus" :key="s.name" :label="s.name">
-              <el-tag :type="s.alive ? 'success' : 'danger'">{{ s.alive ? '运行中' : '离线' }}</el-tag>
+            <el-descriptions-item v-for="(alive, name) in serviceStatus" :key="name" :label="name">
+              <el-tag :type="alive ? 'success' : 'danger'">{{ alive ? '运行中' : '离线' }}</el-tag>
             </el-descriptions-item>
           </el-descriptions>
         </el-card>
       </el-col>
-      <el-col :span="12">
+      <el-col :span="isAdmin ? 12 : 24">
         <el-card>
           <template #header><span>情感分析概览</span></template>
           <div v-if="sentimentData.length" style="height:260px" ref="chartRef"></div>
@@ -55,30 +55,64 @@
       </el-table>
       <el-empty v-if="!eventLoading && hotEvents.length === 0" description="暂无热点事件" />
     </el-card>
+
+    <el-card style="margin-top:20px">
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>我的关注事件</span>
+          <el-button type="primary" text @click="$router.push('/user/preferences')">偏好设置</el-button>
+        </div>
+      </template>
+      <el-empty v-if="!hasPreferences" description="您暂未设置偏好，请前往偏好设置添加关键词或关注领域" />
+      <el-table v-else :data="feedEvents" v-loading="feedLoading" border stripe>
+        <el-table-column prop="title" label="事件标题" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="category" label="分类" width="90">
+          <template #default="{ row }">
+            <el-tag :type="categoryType(row.category)" size="small">{{ row.category || '其他' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="matchType" label="匹配方式" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.matchType === 'keyword'" type="warning" size="small">关键词</el-tag>
+            <el-tag v-else-if="row.matchType === 'domain'" type="success" size="small">领域</el-tag>
+            <el-tag v-else-if="row.matchType === 'both'" type="primary" size="small">关键词+领域</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="hotness" label="热度" width="80" />
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="$router.push(`/event/${row.id}`)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
-import { getCrawlerHealth, getArticles } from '@/api/crawler'
-import { getContentHealth, getCleanArticles } from '@/api/content'
-import { getAnalysisHealth, getSentimentResults } from '@/api/analysis'
-import { getReportHealth, getReports } from '@/api/report'
-import { listEvents } from '@/api/event'
+import { getArticles } from '@/api/crawler'
+import { getCleanArticles } from '@/api/content'
+import { getSentimentResults } from '@/api/analysis'
+import { getReports } from '@/api/report'
+import { listEvents, getMyFeedEvents } from '@/api/event'
+import { getSystemHealth } from '@/api/auth'
+import { listKeywords, listDomains } from '@/api/user'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+const isAdmin = computed(() => userStore.userInfo?.role === 'ADMIN')
 
 const stats = reactive({ articles: 0, cleaned: 0, events: 0, reports: 0 })
-const serviceStatus = ref([
-  { name: 'Java 后端 (8080)', alive: false },
-  { name: 'Python Crawler (8001)', alive: false },
-  { name: 'Python Content (8002)', alive: false },
-  { name: 'Python Intelligence (8003)', alive: false },
-  { name: 'Python Report (8004)', alive: false }
-])
+const serviceStatus = ref({})
 const sentimentData = ref([])
 const chartRef = ref(null)
 const hotEvents = ref([])
 const eventLoading = ref(false)
+const feedEvents = ref([])
+const feedLoading = ref(false)
+const hasPreferences = ref(true)
 
 function lifecycleType(lc) {
   const map = { '潜伏期': 'info', '成长期': 'warning', '高潮期': 'danger', '衰退期': 'info' }
@@ -95,16 +129,13 @@ function categoryType(cat) {
 }
 
 onMounted(async () => {
-  // Java 后端
-  try { await getCrawlerHealth(); serviceStatus.value[0].alive = true } catch (_) {}
-  // Python Crawler (8001)
-  try { await getCrawlerHealth(); serviceStatus.value[1].alive = true } catch (_) {}
-  // Python Content (8002)
-  try { await getContentHealth(); serviceStatus.value[2].alive = true } catch (_) {}
-  // Python Intelligence (8003)
-  try { await getAnalysisHealth(); serviceStatus.value[3].alive = true } catch (_) {}
-  // Python Report (8004)
-  try { await getReportHealth(); serviceStatus.value[4].alive = true } catch (_) {}
+  // 管理员加载系统状态
+  if (isAdmin.value) {
+    try {
+      const res = await getSystemHealth()
+      serviceStatus.value = res.data || {}
+    } catch (_) {}
+  }
 
   try { const res = await getArticles({ pageNum: 1, pageSize: 1 }); stats.articles = res.total || 0 } catch (_) {}
   try { const res = await getCleanArticles({ pageNum: 1, pageSize: 1 }); stats.cleaned = res.total || 0 } catch (_) {}
@@ -143,6 +174,24 @@ onMounted(async () => {
     hotEvents.value = res.data?.records || res.data || []
   } catch (_) {}
   finally { eventLoading.value = false }
+
+  // 我的关注事件
+  feedLoading.value = true
+  try {
+    const [kwRes, domRes] = await Promise.all([
+      listKeywords().catch(() => ({ data: [] })),
+      listDomains().catch(() => ({ data: [] }))
+    ])
+    const kws = kwRes.data || []
+    const doms = domRes.data || []
+    if (kws.length === 0 && doms.length === 0) {
+      hasPreferences.value = false
+    } else {
+      const res = await getMyFeedEvents()
+      feedEvents.value = res.data || []
+    }
+  } catch (_) {}
+  finally { feedLoading.value = false }
 })
 </script>
 

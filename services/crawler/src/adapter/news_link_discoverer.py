@@ -134,9 +134,10 @@ class NewsLinkDiscoverer:
 
     @staticmethod
     def _match_profile(url: str) -> SourceProfile | None:
-        host = urlparse(url).netloc.lower()
+        host = urlparse(url).netloc.lower().removeprefix("www.")
         for profile in SOURCE_PROFILES:
-            if host in profile.domains:
+            clean_domains = tuple(d.removeprefix("www.") for d in profile.domains)
+            if host in clean_domains:
                 return profile
         return None
 

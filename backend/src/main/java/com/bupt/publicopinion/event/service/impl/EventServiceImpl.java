@@ -21,6 +21,9 @@ import com.bupt.publicopinion.event.vo.SimilarEventResult;
 import com.bupt.publicopinion.search.document.EventDocument;
 import com.bupt.publicopinion.search.document.EventSimilarHit;
 import com.bupt.publicopinion.search.service.SearchSyncService;
+import com.bupt.publicopinion.system.entity.UserDomain;
+import com.bupt.publicopinion.system.entity.UserKeyword;
+import com.bupt.publicopinion.system.service.UserPreferenceService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,6 +50,7 @@ public class EventServiceImpl implements EventService {
     private final ArticleSentimentMapper articleSentimentMapper;
     private final PythonIntelligenceClient pythonIntelligenceClient;
     private final SearchSyncService searchSyncService;
+    private final UserPreferenceService userPreferenceService;
 
     public EventServiceImpl(
             EventMapper eventMapper,
@@ -54,7 +58,8 @@ public class EventServiceImpl implements EventService {
             ArticleCleanMapper articleCleanMapper,
             ArticleSentimentMapper articleSentimentMapper,
             PythonIntelligenceClient pythonIntelligenceClient,
-            SearchSyncService searchSyncService
+            SearchSyncService searchSyncService,
+            UserPreferenceService userPreferenceService
     ) {
         this.eventMapper = eventMapper;
         this.eventArticleMapper = eventArticleMapper;
@@ -62,6 +67,7 @@ public class EventServiceImpl implements EventService {
         this.articleSentimentMapper = articleSentimentMapper;
         this.pythonIntelligenceClient = pythonIntelligenceClient;
         this.searchSyncService = searchSyncService;
+        this.userPreferenceService = userPreferenceService;
     }
 
     @Override
@@ -101,7 +107,11 @@ public class EventServiceImpl implements EventService {
         // 3. 清除旧事件（幂等）
         eventArticleMapper.delete(new LambdaQueryWrapper<>());
         eventMapper.delete(new LambdaQueryWrapper<>());
-        searchSyncService.deleteAllEvents();
+        try {
+            searchSyncService.deleteAllEvents();
+        } catch (Exception e) {
+            System.err.println("[Event] ES 事件索引清除失败（ES 可能未启动）: " + e.getMessage());
+        }
 
         // 4. 收集所有有效 cleanId
         Set<Long> validCleanIds = articles.stream()
@@ -275,7 +285,7 @@ public class EventServiceImpl implements EventService {
                         doc.getStartTime(),
                         doc.getEndTime(),
                         doc.getCreateTime(),
-                        null, null, null
+                        null, null, null, null
                 ))
                 .toList();
         return new PageResult<>(records, page.getTotalElements(), pageNum, pageSize);
@@ -309,6 +319,56 @@ public class EventServiceImpl implements EventService {
         response.put("trend", result.get("trend"));
         response.put("note", result.get("note"));
         return response;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteEvent(Long id) {
+        Event event = eventMapper.selectById(id);
+        if (event == null) {
+            throw new EventNotFoundException("事件不存在: " + id);
+        }
+        eventArticleMapper.delete(
+                new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, id)
+        );
+        eventMapper.deleteById(id);
+    }
+
+    @Override
+    public List<EventVO> getMyFeedEvents(Long userId) {
+        List<UserKeyword> keywords = userPreferenceService.listKeywords(userId);
+        List<UserDomain> domains = userPreferenceService.listDomains(userId);
+
+        if (keywords.isEmpty() && domains.isEmpty()) {
+            return List.of();
+        }
+
+        LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<>();
+        wrapper.and(w -> {
+            for (UserKeyword kw : keywords) {
+                w.or().like(Event::getTitle, kw.getKeyword())
+                 .or().like(Event::getKeywords, kw.getKeyword());
+            }
+            for (UserDomain domain : domains) {
+                w.or().like(Event::getCategory, domain.getDomainName());
+            }
+        });
+        wrapper.orderByDesc(Event::getHotness);
+
+        List<Event> events = eventMapper.selectList(wrapper);
+
+        Set<String> keywordSet = keywords.stream().map(UserKeyword::getKeyword).collect(Collectors.toSet());
+        Set<String> domainSet = domains.stream().map(UserDomain::getDomainName).collect(Collectors.toSet());
+
+        return events.stream().map(e -> {
+            boolean kwMatch = keywordSet.stream().anyMatch(kw ->
+                    (e.getTitle() != null && e.getTitle().contains(kw)) ||
+                    (e.getKeywords() != null && e.getKeywords().contains(kw)));
+            boolean domMatch = domainSet.stream().anyMatch(d ->
+                    e.getCategory() != null && e.getCategory().contains(d));
+            String matchType = kwMatch && domMatch ? "both" : kwMatch ? "keyword" : "domain";
+            return EventVO.from(e, matchType);
+        }).toList();
     }
 
     @Override

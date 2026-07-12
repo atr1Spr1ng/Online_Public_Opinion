@@ -1,12 +1,14 @@
 package com.bupt.publicopinion.report.controller;
 
 import com.bupt.publicopinion.common.result.ApiResult;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.report.dto.QaRequest;
 import com.bupt.publicopinion.report.dto.ReportGenerateRequest;
 import com.bupt.publicopinion.report.service.ReportService;
 import com.bupt.publicopinion.report.vo.QaResultVO;
 import com.bupt.publicopinion.report.vo.ReportVO;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,8 +16,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/report")
@@ -43,11 +43,17 @@ public class ReportController {
     }
 
     @GetMapping
-    public ApiResult<List<ReportVO>> listReports(
+    public ApiResult<PageResult<ReportVO>> listReports(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "10") long pageSize
     ) {
         return ApiResult.success(reportService.listReports(pageNum, pageSize));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResult<Void> deleteReport(@PathVariable Long id) {
+        reportService.deleteReport(id);
+        return ApiResult.success();
     }
 
     @PostMapping("/qa")

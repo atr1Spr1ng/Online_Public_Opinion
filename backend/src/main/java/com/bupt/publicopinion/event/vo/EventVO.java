@@ -18,7 +18,8 @@ public record EventVO(
         LocalDateTime createTime,
         BigDecimal sentimentPositive,
         BigDecimal sentimentNegative,
-        BigDecimal sentimentNeutral
+        BigDecimal sentimentNeutral,
+        String matchType
 ) {
     public static EventVO from(Event event) {
         return new EventVO(
@@ -32,7 +33,7 @@ public record EventVO(
                 event.getStartTime(),
                 event.getEndTime(),
                 event.getCreateTime(),
-                null, null, null
+                null, null, null, null
         );
     }
 
@@ -48,7 +49,23 @@ public record EventVO(
                 event.getStartTime(),
                 event.getEndTime(),
                 event.getCreateTime(),
-                sentimentPositive, sentimentNegative, sentimentNeutral
+                sentimentPositive, sentimentNegative, sentimentNeutral, null
+        );
+    }
+
+    public static EventVO from(Event event, String matchType) {
+        return new EventVO(
+                event.getId(),
+                event.getTitle(),
+                event.getKeywords(),
+                event.getArticleCount(),
+                event.getHotness(),
+                event.getLifecycle(),
+                event.getCategory(),
+                event.getStartTime(),
+                event.getEndTime(),
+                event.getCreateTime(),
+                null, null, null, matchType
         );
     }
 }

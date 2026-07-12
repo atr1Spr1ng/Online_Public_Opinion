@@ -3,6 +3,7 @@ package com.bupt.publicopinion.fake.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
 import com.bupt.publicopinion.fake.dto.FakeDetectionRequest;
@@ -41,6 +42,12 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
             throw new FakeDetectionException("清洗后的文章不存在: " + request.cleanId());
         }
 
+        // 删除旧结果，确保重新检测时不会重复
+        articleFakeDetectionMapper.delete(
+                new LambdaQueryWrapper<ArticleFakeDetection>()
+                        .eq(ArticleFakeDetection::getCleanId, request.cleanId())
+        );
+
         PythonIntelligenceClient.FakeDetectionResult pythonResult =
                 pythonIntelligenceClient.detectFake(clean.getTitle(), clean.getContent());
 
@@ -71,7 +78,7 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
     }
 
     @Override
-    public List<FakeDetectionResult> listResults(long pageNum, long pageSize, Boolean isFake) {
+    public PageResult<FakeDetectionResult> listResults(long pageNum, long pageSize, Boolean isFake) {
         Page<ArticleFakeDetection> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<ArticleFakeDetection> wrapper = new LambdaQueryWrapper<>();
         if (isFake != null) {
@@ -79,7 +86,17 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
         }
         wrapper.orderByDesc(ArticleFakeDetection::getCreateTime);
         Page<ArticleFakeDetection> result = articleFakeDetectionMapper.selectPage(page, wrapper);
-        return result.getRecords().stream().map(this::toVO).toList();
+        List<FakeDetectionResult> records = result.getRecords().stream().map(this::toVO).toList();
+        return new PageResult<>(records, result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public void deleteFakeResult(Long id) {
+        ArticleFakeDetection entity = articleFakeDetectionMapper.selectById(id);
+        if (entity == null) {
+            throw new FakeDetectionException("虚假检测结果不存在: " + id);
+        }
+        articleFakeDetectionMapper.deleteById(id);
     }
 
     private ArticleFakeDetection saveResult(Long cleanId, PythonIntelligenceClient.FakeDetectionResult result) {

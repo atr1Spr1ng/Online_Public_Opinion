@@ -68,13 +68,13 @@ public class SearchSyncService {
     }
 
     /**
-     * 按关键词搜索文章（ES multi_match + IK 分词）
+     * 按关键词搜索文章（ES multi_match + IK 分词 + 字段加权 + 最低相关度）
      */
     public Page<ArticleDocument> searchByKeyword(String keyword, int pageNum, int pageSize) {
         NativeQuery query = NativeQuery.builder()
                 .withQuery(q -> q
                         .multiMatch(mm -> mm
-                                .fields("title", "content", "keywords")
+                                .fields("title^3", "keywords^2", "content")
                                 .query(keyword)
                                 .type(TextQueryType.BestFields)
                         )
@@ -83,16 +83,19 @@ public class SearchSyncService {
                 .build();
 
         SearchHits<ArticleDocument> hits = elasticsearchOperations.search(query, ArticleDocument.class);
+
+        // 动态阈值：只保留分数 >= 最高分 30% 的结果，过滤仅顺带提及的噪音文章
+        float maxScore = hits.getMaxScore();
+        float minScore = maxScore * 0.5f;
+
         List<ArticleDocument> results = hits.getSearchHits().stream()
-                .map(h -> {
-                    ArticleDocument doc = h.getContent();
-                    return doc;
-                })
+                .filter(h -> h.getScore() >= minScore)
+                .map(h -> h.getContent())
                 .toList();
         return new org.springframework.data.domain.PageImpl<>(
                 results,
                 PageRequest.of(pageNum - 1, pageSize),
-                hits.getTotalHits()
+                results.size()
         );
     }
 
@@ -113,25 +116,30 @@ public class SearchSyncService {
                 .withQuery(q -> q
                         .bool(b -> {
                             b.must(m -> m.multiMatch(mm -> mm
-                                    .fields("title", "content", "keywords")
+                                    .fields("title^3", "keywords^2", "content")
                                     .query(keyword)
                                     .type(TextQueryType.BestFields)
                             ));
                             if (sourceName != null && !sourceName.isBlank()) {
-                                b.filter(f -> f.term(t -> t.field("sourceName").value(sourceName)));
+                                b.filter(f -> f.term(t -> t.field("sourceName.keyword").value(sourceName)));
                             }
                             return b;
                         })
                 )
                 .withPageable(PageRequest.of(pageNum - 1, pageSize))
-                .build();
+                                .build();
 
         SearchHits<ArticleDocument> hits = elasticsearchOperations.search(query, ArticleDocument.class);
+
+        float maxScore = hits.getMaxScore();
+        float minScore = maxScore * 0.5f;
+
         List<ArticleDocument> results = hits.getSearchHits().stream()
+                .filter(h -> h.getScore() >= minScore)
                 .map(h -> h.getContent())
                 .toList();
         return new org.springframework.data.domain.PageImpl<>(
-                results, PageRequest.of(pageNum - 1, pageSize), hits.getTotalHits()
+                results, PageRequest.of(pageNum - 1, pageSize), results.size()
         );
     }
 
@@ -165,9 +173,16 @@ public class SearchSyncService {
      * 清空并全量重建索引（从 MySQL 同步）
      */
     public void rebuildIndex(List<ArticleClean> allArticles) {
-        // 删除旧索引
         elasticsearchOperations.indexOps(ArticleDocument.class).delete();
-        // Spring Data ES 会在保存时自动创建索引
+        elasticsearchOperations.indexOps(ArticleDocument.class).create();
+        elasticsearchOperations.indexOps(ArticleDocument.class).refresh();
+        List<ArticleDocument> docs = allArticles.stream().map(this::toDocument).toList();
+        if (!docs.isEmpty()) {
+            elasticsearchOperations.save(docs);
+        }
+    }
+
+    public void syncAllArticles(List<ArticleClean> allArticles) {
         List<ArticleDocument> docs = allArticles.stream().map(this::toDocument).toList();
         if (!docs.isEmpty()) {
             elasticsearchOperations.save(docs);

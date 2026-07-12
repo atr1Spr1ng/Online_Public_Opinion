@@ -38,8 +38,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResult<Void>> handlePropagationAnalysisException(
             PropagationAnalysisException exception
     ) {
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(ApiResult.error(HttpStatus.BAD_GATEWAY.value(), exception.getMessage()));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResult.error(HttpStatus.BAD_REQUEST.value(), exception.getMessage()));
     }
     @ExceptionHandler(FakeDetectionException.class)
     public ResponseEntity<ApiResult<Void>> handleFakeDetectionException(
@@ -71,6 +71,14 @@ public class GlobalExceptionHandler {
     ) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResult.error(HttpStatus.UNAUTHORIZED.value(), exception.getMessage()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResult<Void>> handleAccessDeniedException(
+            AccessDeniedException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResult.error(HttpStatus.FORBIDDEN.value(), exception.getMessage()));
     }
 
     @ExceptionHandler(UserNotFoundException.class)

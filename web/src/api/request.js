@@ -30,6 +30,10 @@ service.interceptors.response.use(
       useUserStore().logout()
       router.push('/login')
     }
+    const serverMsg = error.response?.data?.message
+    if (serverMsg) {
+      return Promise.reject(new Error(serverMsg))
+    }
     return Promise.reject(error)
   }
 )

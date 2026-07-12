@@ -7,6 +7,7 @@ import com.bupt.publicopinion.common.util.JwtTokenProvider;
 import com.bupt.publicopinion.config.SystemProperties;
 import com.bupt.publicopinion.system.dto.LoginRequest;
 import com.bupt.publicopinion.system.dto.RefreshTokenRequest;
+import com.bupt.publicopinion.system.dto.RegisterRequest;
 import com.bupt.publicopinion.system.entity.User;
 import com.bupt.publicopinion.system.service.UserService;
 import com.bupt.publicopinion.system.vo.LoginResult;
@@ -81,17 +82,20 @@ public class AuthController {
         return ApiResult.success(UserInfo.from(user));
     }
 
-    // ==================== 扩展点 ====================
-    // 预留：POST /api/auth/register  用户自行注册
-    // @PostMapping("/register")
-    // public ApiResult<UserInfo> register(@Valid @RequestBody RegisterRequest request) {
-    //     User user = new User();
-    //     user.setUsername(request.username());
-    //     user.setPassword(request.password());
-    //     user.setNickname(request.nickname());
-    //     user.setEmail(request.email());
-    //     user.setRole("USER");
-    //     User saved = userService.createUser(user);
-    //     return ApiResult.success(UserInfo.from(saved));
-    // }
+    @PostMapping("/register")
+    public ApiResult<UserInfo> register(@Valid @RequestBody RegisterRequest request) {
+        if (userService.existsByUsername(request.username())) {
+            throw new IllegalArgumentException("用户名已存在");
+        }
+
+        User user = new User();
+        user.setUsername(request.username());
+        user.setPassword(request.password());
+        user.setNickname(request.nickname());
+        user.setEmail(request.email());
+        user.setRole("USER");
+
+        User saved = userService.createUser(user);
+        return ApiResult.success(UserInfo.from(saved));
+    }
 }

@@ -26,7 +26,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      */
     private static final Set<String> WHITELIST_PATHS = Set.of(
             "/api/auth/login",
-            "/api/auth/refresh"
+            "/api/auth/refresh",
+            "/api/auth/register"
     );
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {

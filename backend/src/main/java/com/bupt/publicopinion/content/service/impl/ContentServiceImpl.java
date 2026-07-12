@@ -9,6 +9,7 @@ import com.bupt.publicopinion.content.dto.CleanRequest;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.exception.ContentServiceException;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.service.ContentService;
 import com.bupt.publicopinion.content.vo.CleanResult;
 import com.bupt.publicopinion.search.service.SearchSyncService;
@@ -72,14 +73,20 @@ public class ContentServiceImpl implements ContentService {
     }
 
     @Override
-    public List<ArticleClean> listCleanedArticles(long pageNum, long pageSize) {
+    public PageResult<ArticleClean> listCleanedArticles(long pageNum, long pageSize, boolean excludeAnalyzed, boolean excludeDetected) {
+        LambdaQueryWrapper<ArticleClean> wrapper = new LambdaQueryWrapper<ArticleClean>()
+                .orderByDesc(ArticleClean::getCreateTime);
+
+        if (excludeAnalyzed) {
+            wrapper.notInSql(ArticleClean::getId, "SELECT clean_id FROM article_sentiment");
+        }
+        if (excludeDetected) {
+            wrapper.notInSql(ArticleClean::getId, "SELECT clean_id FROM article_fake_detection");
+        }
+
         Page<ArticleClean> page = new Page<>(pageNum, pageSize);
-        Page<ArticleClean> result = articleCleanMapper.selectPage(
-                page,
-                new LambdaQueryWrapper<ArticleClean>()
-                        .orderByDesc(ArticleClean::getCreateTime)
-        );
-        return result.getRecords();
+        Page<ArticleClean> result = articleCleanMapper.selectPage(page, wrapper);
+        return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
     }
 
     private void saveCleanResult(ArticleRaw raw, CleanResult result) {
@@ -105,5 +112,14 @@ public class ContentServiceImpl implements ContentService {
 
         clean.setSimhash(isDuplicate ? -1L : 0L);
         articleCleanMapper.insert(clean);
+    }
+
+    @Override
+    public void deleteCleanedArticle(Long id) {
+        ArticleClean article = articleCleanMapper.selectById(id);
+        if (article == null) {
+            throw new RuntimeException("清洗文章不存在: " + id);
+        }
+        articleCleanMapper.deleteById(id);
     }
 }

@@ -19,3 +19,7 @@ export function getCleanArticles(params) {
 export function getCleanDetail(id) {
   return request({ url: `/content/clean/${id}`, method: 'get' })
 }
+
+export function deleteCleanArticle(id) {
+  return request({ url: `/content/clean/${id}`, method: 'delete' })
+}
