@@ -1,5 +1,6 @@
 <template>
   <div>
+    <!-- 平台统计卡片 -->
     <el-row :gutter="20" class="stats-row">
       <el-col :span="6">
         <el-card><div class="stat-item"><div class="stat-num">{{ stats.totalUsers }}</div><div class="stat-label">总用户数</div></div></el-card>
@@ -11,35 +12,48 @@
         <el-card><div class="stat-item"><div class="stat-num">{{ stats.totalEvents }}</div><div class="stat-label">舆情事件</div></div></el-card>
       </el-col>
       <el-col :span="6">
-        <el-card><div class="stat-item"><div class="stat-num">{{ stats.todayArticles }}</div><div class="stat-label">今日新增</div></div></el-card>
+        <el-card><div class="stat-item"><div class="stat-num">{{ stats.totalCleaned }}</div><div class="stat-label">已清洗</div></div></el-card>
       </el-col>
     </el-row>
 
-    <el-card style="margin-top: 20px">
-      <template #header><span>微服务状态</span></template>
-      <el-row :gutter="16">
-        <el-col v-for="(info, name) in services" :key="name" :span="4">
-          <el-card shadow="hover" class="service-card">
-            <div class="service-name">{{ name }}</div>
-            <el-tag :type="info.alive ? 'success' : 'danger'" size="large">
-              {{ info.alive ? '运行中' : '离线' }}
-            </el-tag>
-          </el-card>
-        </el-col>
-      </el-row>
-    </el-card>
+    <!-- 今日数据 & 服务状态 -->
+    <el-row :gutter="20" style="margin-top: 20px">
+      <el-col :span="12">
+        <el-card>
+          <template #header><span>今日数据</span></template>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="今日新增文章">{{ stats.todayArticles }}</el-descriptions-item>
+            <el-descriptions-item label="今日新增事件">{{ stats.todayEvents }}</el-descriptions-item>
+            <el-descriptions-item label="ES 文章索引">{{ stats.esArticleCount }}</el-descriptions-item>
+            <el-descriptions-item label="ES 事件索引">{{ stats.esEventCount }}</el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card>
+          <template #header><span>微服务状态</span></template>
+          <el-row :gutter="12">
+            <el-col v-for="(info, name) in services" :key="name" :span="8">
+              <el-card shadow="hover" class="service-card">
+                <div class="service-name">{{ name }}</div>
+                <el-tag :type="info.alive ? 'success' : 'danger'" size="small">
+                  {{ info.alive ? '运行中' : '离线' }}
+                </el-tag>
+              </el-card>
+            </el-col>
+          </el-row>
+        </el-card>
+      </el-col>
+    </el-row>
 
+    <!-- ES 索引 & 线程池 -->
     <el-row :gutter="20" style="margin-top: 20px">
       <el-col :span="12">
         <el-card>
           <template #header><span>ES 索引详情</span></template>
           <el-descriptions :column="1" border>
-            <el-descriptions-item label="article_clean 文档数">
-              {{ stats.esArticleCount }}
-            </el-descriptions-item>
-            <el-descriptions-item label="events 文档数">
-              {{ stats.esEventCount }}
-            </el-descriptions-item>
+            <el-descriptions-item label="article_clean 文档数">{{ stats.esArticleCount }}</el-descriptions-item>
+            <el-descriptions-item label="events 文档数">{{ stats.esEventCount }}</el-descriptions-item>
           </el-descriptions>
         </el-card>
       </el-col>
@@ -86,9 +100,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.stats-row { text-align: center; }
+.stats-row .el-card { text-align: center; }
 .stat-num { font-size: 28px; font-weight: bold; color: #409EFF; }
 .stat-label { font-size: 13px; color: #909399; margin-top: 4px; }
-.service-card { text-align: center; padding: 8px; }
-.service-name { font-size: 12px; color: #909399; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.service-card { text-align: center; padding: 6px; margin-bottom: 10px; }
+.service-name { font-size: 11px; color: #909399; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

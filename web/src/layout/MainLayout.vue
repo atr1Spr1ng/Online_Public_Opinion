@@ -14,17 +14,13 @@
         text-color="#bfcbd9"
         active-text-color="#409EFF"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><HomeFilled /></el-icon>
-          <span>系统概览</span>
+        <el-menu-item index="/admin/monitor">
+          <el-icon><Monitor /></el-icon>
+          <span>系统监控</span>
         </el-menu-item>
         <el-menu-item index="/admin/users">
           <el-icon><User /></el-icon>
           <span>用户管理</span>
-        </el-menu-item>
-        <el-menu-item index="/admin/monitor">
-          <el-icon><Monitor /></el-icon>
-          <span>系统监控</span>
         </el-menu-item>
       </el-menu>
       <el-menu

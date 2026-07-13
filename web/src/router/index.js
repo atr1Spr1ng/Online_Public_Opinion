@@ -39,11 +39,14 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - 网络舆情智能分析系统` : '网络舆情智能分析系统'
   const userStore = useUserStore()
+  const isAdmin = userStore.userInfo?.role === 'ADMIN'
   if (to.path !== '/login' && !userStore.token) {
     next('/login')
   } else if (to.path === '/login' && userStore.token) {
-    next('/dashboard')
-  } else if (to.meta.requireAdmin && userStore.userInfo?.role !== 'ADMIN') {
+    next(isAdmin ? '/admin/monitor' : '/dashboard')
+  } else if (to.path === '/dashboard' && isAdmin) {
+    next('/admin/monitor')
+  } else if (to.meta.requireAdmin && !isAdmin) {
     next('/dashboard')
   } else {
     next()
