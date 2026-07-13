@@ -1,11 +1,34 @@
 import math
+import json
+import re
+import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
 
 from src.model.clustering_model import ArticleItem, EventCluster, ClusterResponse
+from src.config import EventSummaryConfig, EVENT_NAMING_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 class ClusteringService:
+
+    def __init__(self):
+        self._llm_client = None
+
+    @property
+    def llm_client(self):
+        if self._llm_client is None and EventSummaryConfig.enabled():
+            try:
+                from openai import OpenAI
+                self._llm_client = OpenAI(
+                    api_key=EventSummaryConfig.api_key,
+                    base_url=EventSummaryConfig.base_url,
+                )
+                logger.info("Clustering LLM client initialized")
+            except Exception as e:
+                logger.warning("Failed to init Clustering LLM client: %s", e)
+        return self._llm_client
 
     def cluster(self, articles: list[ArticleItem], threshold: float = 0.25) -> ClusterResponse:
         if not articles:
@@ -56,17 +79,9 @@ class ClusteringService:
         for i, cluster in enumerate(valid_clusters):
             event_id = i + 1
             arts = cluster["articles"]
-            keyword_freq: dict[str, int] = defaultdict(int)
-            for a in arts:
-                for kw in keyword_sets.get(a.id, set()):
-                    keyword_freq[kw] += 1
 
-            # 取频率最高的关键词作为事件标签
-            top_keywords = sorted(keyword_freq, key=keyword_freq.get, reverse=True)[:10]
-
-            # 事件标题：频率最高的关键词 + "事件"
-            title_kw = top_keywords[0] if top_keywords else "未命名"
-            title = f"{title_kw}事件"
+            # LLM 生成标题和关键词，失败时降级为词频
+            title, top_keywords = self._generate_event_name(arts, keyword_sets)
 
             article_count = len(arts)
             hotness = self._calc_hotness(arts, now)
@@ -98,6 +113,71 @@ class ClusteringService:
             clustered_articles=sum(e.article_count for e in events),
             unclustered_articles=noise_count,
         )
+
+    def _generate_event_name(self, arts: list[ArticleItem], keyword_sets: dict[int, set[str]]) -> tuple[str, list[str]]:
+        """生成事件标题和关键词：LLM 优先，词频降级"""
+        if EventSummaryConfig.enabled() and self.llm_client:
+            llm_result = self._generate_by_llm(arts)
+            if llm_result is not None:
+                return llm_result
+
+        return self._generate_by_frequency(arts, keyword_sets)
+
+    def _generate_by_llm(self, arts: list[ArticleItem]) -> tuple[str, list[str]] | None:
+        """DeepSeek LLM 生成事件标题和关键词"""
+        try:
+            articles_text = ""
+            for j, a in enumerate(arts[:15]):  # 最多15篇防止token超限
+                title = a.title or "无标题"
+                keywords = a.keywords or ""
+                articles_text += f"[{j + 1}] 标题：{title}\n    关键词：{keywords}\n\n"
+
+            user_content = (
+                f"以下是一个舆情事件的相关报道：\n\n{articles_text}"
+                f"请根据以上报道生成事件标题（15字以内，不以\"事件\"结尾）和5-10个核心关键词。严格按 JSON 格式回复。"
+            )
+
+            response = self.llm_client.chat.completions.create(
+                model=EventSummaryConfig.model,
+                messages=[
+                    {"role": "system", "content": EVENT_NAMING_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.3,
+                max_tokens=300,
+            )
+            content = response.choices[0].message.content
+            return self._parse_naming_response(content)
+
+        except Exception as e:
+            logger.error("Event naming LLM call failed: %s", e)
+            return None
+
+    def _parse_naming_response(self, content: str) -> tuple[str, list[str]] | None:
+        """解析 LLM 返回的 JSON"""
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                data = json.loads(json_match.group())
+                title = data.get("title", "").strip()
+                keywords = data.get("keywords", [])
+                if title and keywords:
+                    return (title, keywords)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning("Failed to parse naming LLM JSON: %s", e)
+        return None
+
+    def _generate_by_frequency(self, arts: list[ArticleItem], keyword_sets: dict[int, set[str]]) -> tuple[str, list[str]]:
+        """词频降级：最高频关键词 + 事件"""
+        keyword_freq: dict[str, int] = defaultdict(int)
+        for a in arts:
+            for kw in keyword_sets.get(a.id, set()):
+                keyword_freq[kw] += 1
+
+        top_keywords = sorted(keyword_freq, key=keyword_freq.get, reverse=True)[:10]
+        title_kw = top_keywords[0] if top_keywords else "未命名"
+        title = f"{title_kw}事件"
+        return (title, top_keywords)
 
     def _jaccard(self, set1: set[str], set2: set[str]) -> float:
         if not set1 or not set2:
