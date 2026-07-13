@@ -63,3 +63,7 @@ export function deleteArticle(id) {
 export function deleteTask(id) {
   return request({ url: `/crawler/tasks/${id}`, method: 'delete' })
 }
+
+export function fetchSocialHot(platform) {
+  return request({ url: `/crawler/social/${platform}/hot`, method: 'get' })
+}

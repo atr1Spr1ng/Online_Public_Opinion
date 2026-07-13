@@ -1,5 +1,11 @@
 import uvicorn
+import logging
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 app = FastAPI(title="Intelligence Analysis Service", version="0.1.0")
 

@@ -63,7 +63,7 @@ class SummaryService:
                     {"role": "user", "content": user_content}
                 ],
                 temperature=0.3,
-                max_tokens=800,
+                max_tokens=2000,
             )
             content = response.choices[0].message.content
             return self._parse_response(content)
@@ -92,9 +92,20 @@ class SummaryService:
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("Failed to parse LLM JSON: %s, raw: %s", e, content[:200])
 
-        # Regex fallback
+        # Regex fallback: 尝试在句子边界截断，避免中间切断
         result = EventSummaryResponse(method="llm")
-        result.summary = content[:500] if content else ""
+        raw = content.strip() if content else ""
+        if len(raw) > 500:
+            cut = raw[:500]
+            # 在最后一个句号、问号、感叹号或换行处截断
+            for sep in ("。", "！", "？", "\n", "；", "，"):
+                idx = cut.rfind(sep)
+                if idx > 300:
+                    raw = cut[:idx + 1]
+                    break
+            else:
+                raw = cut
+        result.summary = raw
 
         patterns = {
             "time": r"(?:时间|发生时间)[：:]\s*(.+?)(?:\n|$)",

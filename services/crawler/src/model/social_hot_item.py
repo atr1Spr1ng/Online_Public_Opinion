@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SocialHotItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     rank: int
     title: str
     hot_score: int | str | None = Field(default=None, alias="hotScore")

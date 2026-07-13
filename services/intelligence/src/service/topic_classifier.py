@@ -1,3 +1,5 @@
+import json
+import logging
 import math
 import re
 from collections import defaultdict
@@ -5,6 +7,10 @@ from collections import defaultdict
 import jieba
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
+
+from src.config import EventSummaryConfig, EVENT_CLASSIFICATION_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 # 预设类别关键词词典（用于给 LDA 自动打标签，每类 12-25 个代表词）
 CATEGORY_KEYWORDS = {
@@ -71,27 +77,107 @@ STOP_WORDS = {
 
 
 class TopicClassifier:
-    """LDA 主题分类器 + 关键词词典自动命名"""
+    """主题分类器：LLM → LDA → 关键词规则 三级降级"""
 
     def __init__(self, n_topics: int = 8, random_state: int = 42):
         self.n_topics = n_topics
         self.random_state = random_state
+        self._llm_client = None
+
+    @property
+    def llm_client(self):
+        if self._llm_client is None and EventSummaryConfig.enabled():
+            try:
+                from openai import OpenAI
+                self._llm_client = OpenAI(
+                    api_key=EventSummaryConfig.api_key,
+                    base_url=EventSummaryConfig.base_url,
+                )
+                logger.info("TopicClassifier LLM client initialized")
+            except Exception as e:
+                logger.warning("Failed to init TopicClassifier LLM client: %s", e)
+        return self._llm_client
 
     def classify(self, events: list[dict]) -> list[dict]:
         """
         对事件列表进行主题分类。
         每个 event 需含字段: event_id, title, keywords (list[str])
         返回带 category 字段的 event 列表。
+        降级链: LLM → LDA → 关键词规则
         """
         n = len(events)
         if n == 0:
             return events
 
-        # 太少事件时退回纯关键词规则
-        if n < 20:
-            return self._classify_by_keyword_rules(events)
+        # 1. LLM 批量分类（主力）
+        result = self._classify_by_llm(events)
+        if result is not None:
+            logger.info("Topic classification: LLM classified %d events", n)
+            return result
 
-        return self._classify_by_lda(events)
+        # 2. LDA + 字典（事件数 ≥ 20 时）
+        if n >= 20:
+            logger.info("Topic classification: LLM failed, falling back to LDA")
+            return self._classify_by_lda(events)
+
+        # 3. 纯关键词规则（最终降级）
+        logger.info("Topic classification: falling back to keyword rules")
+        return self._classify_by_keyword_rules(events)
+
+    def _classify_by_llm(self, events: list[dict]) -> list[dict] | None:
+        """LLM 零样本批量分类，失败返回 None"""
+        if not EventSummaryConfig.enabled() or not self.llm_client:
+            return None
+
+        try:
+            # 构建事件列表
+            events_text = ""
+            for e in events:
+                eid = e.get("event_id", 0)
+                title = e.get("title", "") or ""
+                keywords = " ".join(e.get("keywords", []) or [])
+                events_text += f"[{eid}] 标题：{title}\n    关键词：{keywords}\n\n"
+
+            user_content = f"以下共有 {len(events)} 个舆情事件，请逐一归类：\n\n{events_text}"
+
+            response = self.llm_client.chat.completions.create(
+                model=EventSummaryConfig.model,
+                messages=[
+                    {"role": "system", "content": EVENT_CLASSIFICATION_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.1,
+                max_tokens=min(len(events) * 40 + 100, 2048),
+            )
+            content = response.choices[0].message.content
+
+            # 解析 JSON
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if not json_match:
+                return None
+            data = json.loads(json_match.group())
+            classifications = data.get("classifications", [])
+            if not classifications:
+                return None
+
+            # 构建 event_id → category 映射
+            cat_map: dict[int, str] = {}
+            valid_categories = set(CATEGORY_KEYWORDS.keys())
+            for item in classifications:
+                eid = item.get("event_id", 0)
+                cat = item.get("category", "其他")
+                cat_map[eid] = cat if cat in valid_categories else "其他"
+
+            # 赋值
+            for e in events:
+                eid = e.get("event_id", 0)
+                e["category"] = cat_map.get(eid, "其他")
+
+            return events
+
+        except Exception as e:
+            logger.error("LLM topic classification failed: %s", e)
+            return None
 
     def _classify_by_lda(self, events: list[dict]) -> list[dict]:
         """LDA + 关键词词典混合分类"""

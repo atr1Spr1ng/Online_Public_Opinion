@@ -8,6 +8,7 @@ import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
+import com.bupt.publicopinion.collection.vo.SocialHotResult;
 import com.bupt.publicopinion.collection.vo.TopicSearchResult;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -85,6 +86,24 @@ public class PythonCrawlerClient {
                     .body(request)
                     .retrieve()
                     .body(NewsCollectResult.class);
+
+            if (result == null) {
+                throw new CrawlerServiceException("Python 爬虫服务返回空响应");
+            }
+            return result;
+        } catch (CrawlerServiceException exception) {
+            throw exception;
+        } catch (RestClientException exception) {
+            throw new CrawlerServiceException("调用 Python 爬虫服务失败", exception);
+        }
+    }
+
+    public SocialHotResult fetchSocialHot(String platform) {
+        try {
+            SocialHotResult result = crawlerRestClient.get()
+                    .uri("/internal/crawler/social/{platform}/hot", platform)
+                    .retrieve()
+                    .body(SocialHotResult.class);
 
             if (result == null) {
                 throw new CrawlerServiceException("Python 爬虫服务返回空响应");

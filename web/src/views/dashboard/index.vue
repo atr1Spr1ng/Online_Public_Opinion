@@ -146,7 +146,7 @@ onMounted(async () => {
   // 热点事件 Top 5
   eventLoading.value = true
   try {
-    const res = await listEvents({ pageNum: 1, pageSize: 5, sortBy: 'hotness' })
+    const res = await listEvents({ pageNum: 1, pageSize: 5 })
     hotEvents.value = res.data?.records || res.data || []
   } catch (_) {}
   finally { eventLoading.value = false }

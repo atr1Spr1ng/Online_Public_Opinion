@@ -5,14 +5,19 @@
       <template #header>
         <div class="card-header">
           <span>待清洗原始文章</span>
-          <el-button type="primary" @click="batchClean" :disabled="!selected.length">
-            批量清洗 ({{ selected.length }})
-          </el-button>
+          <div style="display:flex;gap:8px">
+            <el-button type="danger" @click="batchDeleteRaw" :disabled="!selectedRawIds.length">
+              批量删除 ({{ selectedRawIds.length }})
+            </el-button>
+            <el-button type="primary" @click="batchClean" :disabled="!selected.length">
+              批量清洗 ({{ selected.length }})
+            </el-button>
+          </div>
         </div>
       </template>
       <el-table
         :data="rawArticles" v-loading="rawLoading" border stripe
-        @selection-change="val => selected = val.map(i => i.id)"
+        @selection-change="val => { selected = val.map(i => i.id); selectedRawIds = val.map(i => i.id) }"
       >
         <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="60" />
@@ -87,7 +92,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { getArticles } from '@/api/crawler'
+import { getArticles, deleteArticle } from '@/api/crawler'
 import { getCleanArticles, cleanArticle, batchClean as batchCleanApi, deleteCleanArticle } from '@/api/content'
 import { ElMessage } from 'element-plus'
 
@@ -97,6 +102,7 @@ const rawArticles = ref([])
 const rawTotal = ref(0)
 const rawPage = reactive({ pageNum: 1, pageSize: 10 })
 const selected = ref([])
+const selectedRawIds = ref([])
 
 async function fetchRawArticles() {
   rawLoading.value = true
@@ -128,6 +134,21 @@ async function fetchCleanedArticles() {
 }
 
 // ---- 清洗操作 ----
+async function batchDeleteRaw() {
+  const ids = [...selectedRawIds.value]
+  if (!ids.length) return
+  try {
+    for (const id of ids) {
+      await deleteArticle(id)
+    }
+    ElMessage.success(`已删除 ${ids.length} 篇文章`)
+    selectedRawIds.value = []
+    selected.value = []
+    fetchRawArticles()
+    fetchCleanedArticles()
+  } catch (e) { ElMessage.error(e.message) }
+}
+
 async function cleanSingle(row) {
   try {
     await cleanArticle({ rawId: row.id })

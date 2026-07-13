@@ -50,3 +50,4 @@ export function listAdminEsArticles(params) {
 export function listAdminEsEvents(params) {
   return request.get('/admin/es/events', { params })
 }
+

@@ -123,8 +123,8 @@ class FakeDetectionService:
             if llm_result is not None:
                 llm_score = llm_result.get("fake_score", rule_score)
                 llm_reason = llm_result.get("reason", "")
-                # 混合分数: 规则60% + LLM 40%
-                hybrid_score = round(rule_score * 0.6 + llm_score * 0.4, 4)
+                # 混合分数: 规则40% + LLM 60%（LLM 更可靠）
+                hybrid_score = round(rule_score * 0.4 + llm_score * 0.6, 4)
                 is_hybrid_fake = hybrid_score >= 0.5
                 details_parts.append(f"LLM得分: {llm_score:.4f}")
                 details_parts.append(f"LLM理由: {llm_reason}")
@@ -272,16 +272,26 @@ class FakeDetectionService:
 
     def _parse_llm_response(self, content: str) -> dict:
         """解析 LLM 返回的内容，提取 fake_score"""
-        score = 0.5  # 默认中性
-        reason = content or ""
+        # 1. 尝试 JSON 解析（主力）
+        json_match = re.search(r'\{[\s\S]*\}', content)
+        if json_match:
+            try:
+                data = json.loads(json_match.group())
+                score = float(data.get("fake_score", 0.5))
+                reason = data.get("reason", content or "")
+                return {"fake_score": max(0.0, min(1.0, score)), "reason": reason}
+            except (json.JSONDecodeError, ValueError, KeyError):
+                pass
 
-        # 尝试提取数值评分
+        # 2. 降级：正则提取数值
+        score = 0.5
+        reason = content or ""
         match = re.search(r'(?:虚假|fake).*?(?:评分|分数|score).*?(\d+\.?\d*)', content, re.IGNORECASE)
         if match:
             val = float(match.group(1))
             score = val / 10.0 if val > 1 else val
         else:
-            # 关键词判断
+            # 3. 再次降级：关键词硬猜
             content_lower = content.lower()
             if any(w in content_lower for w in ["高度可疑", "虚假信息", "明显造假", "fake", "fabricated"]):
                 score = 0.8

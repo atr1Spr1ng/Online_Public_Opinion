@@ -17,12 +17,37 @@ log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# ── 加载环境变量 ──
+ENV_FILE="$ROOT/services/report/.env"
+if [ -f "$ENV_FILE" ]; then
+    log_info "加载环境变量: $ENV_FILE"
+    set -a
+    . "$ENV_FILE"
+    set +a
+else
+    log_warn "未找到 .env 文件: $ENV_FILE"
+fi
+
 # ── Elasticsearch ──
 log_info "检查 Elasticsearch (9200)..."
 if curl -s http://localhost:9200 > /dev/null 2>&1; then
     log_info "Elasticsearch 已在运行"
 else
-    log_warn "Elasticsearch 未启动，请手动启动: C:/Users/Lenovo/Desktop/elasticsearch-8.17.4/bin/elasticsearch.bat"
+    log_warn "Elasticsearch 未启动，尝试自动启动..."
+    ES_BAT="C:/Users/Lenovo/Desktop/elasticsearch-8.17.4/bin/elasticsearch.bat"
+    if [ -f "$ES_BAT" ]; then
+        start "" "$ES_BAT" 2>/dev/null || log_warn "无法自动启动 ES，请手动启动: $ES_BAT"
+        log_info "等待 ES 启动 (最多60秒)..."
+        for i in $(seq 1 60); do
+            if curl -s http://localhost:9200 > /dev/null 2>&1; then
+                log_info "Elasticsearch 启动成功"
+                break
+            fi
+            sleep 1
+        done
+    else
+        log_error "找不到 ES: $ES_BAT"
+    fi
 fi
 
 # ── Python 爬虫 (8001) ──

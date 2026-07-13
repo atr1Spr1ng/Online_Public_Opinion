@@ -23,6 +23,7 @@ import com.bupt.publicopinion.collection.vo.BatchTopicResult;
 import com.bupt.publicopinion.collection.vo.CrawlTaskDetailResult;
 import com.bupt.publicopinion.collection.vo.CrawlerHealthResult;
 import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
+import com.bupt.publicopinion.collection.vo.SocialHotResult;
 import com.bupt.publicopinion.collection.vo.DiscoveredNewsLink;
 import com.bupt.publicopinion.collection.vo.FailedNewsCrawl;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
@@ -145,6 +146,11 @@ public class CrawlerServiceImpl implements CrawlerService {
             }
         }
         return result;
+    }
+
+    @Override
+    public SocialHotResult fetchSocialHot(String platform) {
+        return pythonCrawlerClient.fetchSocialHot(platform);
     }
 
     @Override

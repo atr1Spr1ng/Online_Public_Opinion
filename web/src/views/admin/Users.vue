@@ -43,7 +43,6 @@
         </el-table-column>
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
             <el-button type="warning" link size="small" @click="openResetPwd(row)">重置密码</el-button>
             <template v-if="!isSelf(row) && row.id !== 1">
               <el-popconfirm title="确定要删除该用户吗？" @confirm="handleDelete(row)">
@@ -66,31 +65,25 @@
       </div>
     </el-card>
 
-    <!-- 编辑 / 新增弹窗 -->
-    <el-dialog v-model="editDialog.visible" :title="editDialog.isNew ? '新增用户' : '编辑用户'" width="460px">
-      <el-form :model="editDialog.form" label-width="80px">
-        <el-form-item label="用户名" v-if="editDialog.isNew">
-          <el-input v-model="editDialog.form.username" />
+    <!-- 新增用户弹窗 -->
+    <el-dialog v-model="createDialog.visible" title="新增用户" width="400px">
+      <el-form :model="createDialog.form" label-width="80px">
+        <el-form-item label="用户名">
+          <el-input v-model="createDialog.form.username" />
         </el-form-item>
-        <el-form-item label="密码" v-if="editDialog.isNew">
-          <el-input v-model="editDialog.form.password" type="password" show-password />
-        </el-form-item>
-        <el-form-item label="昵称">
-          <el-input v-model="editDialog.form.nickname" />
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="editDialog.form.email" />
+        <el-form-item label="密码">
+          <el-input v-model="createDialog.form.password" type="password" show-password />
         </el-form-item>
         <el-form-item label="角色">
-          <el-select v-model="editDialog.form.role" style="width:100%">
+          <el-select v-model="createDialog.form.role" style="width:100%">
             <el-option label="管理员" value="ADMIN" />
             <el-option label="普通用户" value="USER" />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="submitEdit">确定</el-button>
+        <el-button @click="createDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="submitCreate">确定</el-button>
       </template>
     </el-dialog>
 
@@ -125,9 +118,9 @@ const pageNum = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
-const editDialog = reactive({
-  visible: false, isNew: false,
-  form: { id: null, username: '', password: '', nickname: '', email: '', role: 'USER' }
+const createDialog = reactive({
+  visible: false,
+  form: { username: '', password: '', role: 'USER' }
 })
 
 const pwdDialog = reactive({ visible: false, userId: null, password: '' })
@@ -171,30 +164,18 @@ async function changeRole(row) {
 }
 
 function openCreate() {
-  editDialog.isNew = true
-  editDialog.form = { id: null, username: '', password: '', nickname: '', email: '', role: 'USER' }
-  editDialog.visible = true
+  createDialog.form = { username: '', password: '', role: 'USER' }
+  createDialog.visible = true
 }
 
-function openEdit(row) {
-  editDialog.isNew = false
-  editDialog.form = { id: row.id, username: row.username, password: '', nickname: row.nickname || '', email: row.email || '', role: row.role }
-  editDialog.visible = true
-}
-
-async function submitEdit() {
-  const f = editDialog.form
-  if (!f.username && editDialog.isNew) { ElMessage.warning('请输入用户名'); return }
-  if (!f.password && editDialog.isNew) { ElMessage.warning('请输入密码'); return }
+async function submitCreate() {
+  const f = createDialog.form
+  if (!f.username) { ElMessage.warning('请输入用户名'); return }
+  if (!f.password || f.password.length < 6) { ElMessage.warning('密码至少6位'); return }
   try {
-    if (editDialog.isNew) {
-      await register({ username: f.username, password: f.password, nickname: f.nickname, email: f.email })
-      ElMessage.success('用户已创建')
-    } else {
-      await updateUser(f.id, { nickname: f.nickname, email: f.email, role: f.role })
-      ElMessage.success('已更新')
-    }
-    editDialog.visible = false
+    await register({ username: f.username, password: f.password, role: f.role })
+    ElMessage.success('用户已创建')
+    createDialog.visible = false
     fetchUsers()
   } catch (e) { ElMessage.error(e.message) }
 }

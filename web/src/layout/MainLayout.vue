@@ -41,9 +41,8 @@
             <el-icon><Collection /></el-icon>
             <span>数据采集</span>
           </template>
-          <el-menu-item index="/crawler/source-collect">按新闻源采集</el-menu-item>
-          <el-menu-item index="/crawler/topic-collect">按话题采集</el-menu-item>
-          <el-menu-item index="/crawler/articles">原始文章</el-menu-item>
+          <el-menu-item index="/crawler/batch-collect">批量采集</el-menu-item>
+          <el-menu-item index="/crawler/hot-list">热搜榜单</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/content/clean">
           <el-icon><Brush /></el-icon>

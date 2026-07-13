@@ -1,8 +1,13 @@
 import json
+import os
 import re
+import logging
 import jieba
 
 from src.model.sentiment_model import SentimentRequest, SentimentResponse, SentimentWord
+from src.config import SENTIMENT_ANALYSIS_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 # ── 中文情感词典（内嵌） ──────────────────────────────────────────────
@@ -93,6 +98,26 @@ NEGATION_WINDOW = 3
 
 
 class SentimentService:
+    """情感分析：LLM → 字典 两级降级"""
+
+    def __init__(self):
+        self._llm_client = None
+
+    @property
+    def _llm(self):
+        if self._llm_client is None:
+            api_key = os.getenv("DEEPSEEK_API_KEY", "")
+            if api_key:
+                try:
+                    from openai import OpenAI
+                    self._llm_client = OpenAI(
+                        api_key=api_key,
+                        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                    )
+                    logger.info("SentimentService LLM client initialized")
+                except Exception as e:
+                    logger.warning("Failed to init SentimentService LLM client: %s", e)
+        return self._llm_client
 
     def analyze(self, request: SentimentRequest) -> SentimentResponse:
         text = f"{request.title} {request.content}".strip()
@@ -104,6 +129,53 @@ class SentimentService:
                 confidence=0.0,
                 details="empty text"
             )
+
+        # 1. LLM 情感分析（主力）
+        llm_result = self._analyze_by_llm(text)
+        if llm_result is not None:
+            return llm_result
+
+        # 2. 字典匹配（降级）
+        logger.info("Sentiment: LLM failed, falling back to dictionary")
+        return self._analyze_by_dictionary(text)
+
+    def _analyze_by_llm(self, text: str) -> SentimentResponse | None:
+        """LLM 零样本情感分析，失败返回 None"""
+        if not self._llm:
+            return None
+
+        try:
+            truncated = text[:2000] if len(text) > 2000 else text
+            response = self._llm.chat.completions.create(
+                model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                messages=[
+                    {"role": "system", "content": SENTIMENT_ANALYSIS_SYSTEM_PROMPT},
+                    {"role": "user", "content": truncated}
+                ],
+                temperature=0.2,
+                max_tokens=200,
+            )
+            content = response.choices[0].message.content
+
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                data = json.loads(json_match.group())
+                sentiment = data.get("sentiment", "NEUTRAL")
+                if sentiment not in ("POSITIVE", "NEGATIVE", "NEUTRAL"):
+                    sentiment = "NEUTRAL"
+                return SentimentResponse(
+                    sentiment=sentiment,
+                    positive_score=float(data.get("positive_score", 0)),
+                    negative_score=float(data.get("negative_score", 0)),
+                    confidence=float(data.get("confidence", 0)),
+                    details=data.get("reason", ""),
+                )
+
+        except Exception as e:
+            logger.error("LLM sentiment analysis failed: %s", e)
+        return None
+
+    def _analyze_by_dictionary(self, text: str) -> SentimentResponse:
 
         words = list(jieba.cut(text))
         words = [w.strip() for w in words if w.strip()]

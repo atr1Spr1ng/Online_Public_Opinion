@@ -62,7 +62,7 @@ class SocialMediaAdapter:
         realtime = data.get("data", {}).get("realtime", [])
 
         for idx, entry in enumerate(realtime[:50], start=1):
-            raw_score = entry.get("raw_hot", 0) or 0
+            raw_score = (entry.get("raw_hot") or entry.get("num") or 0)
             word = entry.get("word", "")
             scheme = entry.get("word_scheme", "")
             url = f"https://s.weibo.com/weibo?q={word}&t=31" if word else scheme
@@ -84,7 +84,7 @@ class SocialMediaAdapter:
 
     def fetch_baidu_hot(self) -> SocialHotResult:
         """获取百度实时热搜榜（无需登录）"""
-        url = "https://top.baidu.com/api/board?platform=wise&tab=realtime"
+        url = "https://top.baidu.com/api/board?platform=pc&tab=realtime"
         try:
             response = self._client.get(url, headers=self._BAIDU_HEADERS)
             response.raise_for_status()
@@ -100,22 +100,21 @@ class SocialMediaAdapter:
 
         items: list[SocialHotItem] = []
         for card in data.get("data", {}).get("cards", []):
-            for block in card.get("content", []):
-                for idx, entry in enumerate(block.get("content", []), start=1):
-                    word = entry.get("word", "")
-                    hot_score = entry.get("hotScore", 0) or 0
-                    url = entry.get("url", "")
-                    desc = entry.get("desc", "") or ""
+            for idx, entry in enumerate(card.get("content", []), start=1):
+                title = entry.get("query") or entry.get("word", "")
+                hot_score = entry.get("hotScore", 0) or 0
+                url = entry.get("url", "")
+                desc = entry.get("desc") or ""
 
-                    items.append(
-                        SocialHotItem(
-                            rank=idx,
-                            title=word,
-                            hot_score=hot_score,
-                            url=url,
-                            summary=desc,
-                        )
+                items.append(
+                    SocialHotItem(
+                        rank=idx,
+                        title=title,
+                        hot_score=hot_score,
+                        url=url,
+                        summary=desc,
                     )
+                )
 
         return SocialHotResult(
             platform="baidu",

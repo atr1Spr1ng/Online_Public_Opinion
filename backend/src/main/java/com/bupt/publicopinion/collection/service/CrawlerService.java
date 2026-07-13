@@ -15,6 +15,7 @@ import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
+import com.bupt.publicopinion.collection.vo.SocialHotResult;
 import com.bupt.publicopinion.common.vo.PageResult;
 
 public interface CrawlerService {
@@ -51,6 +52,8 @@ public interface CrawlerService {
     NewsSource updateNewsSource(Long sourceId, NewsSourceRequest request);
 
     BatchTopicResult searchAndCollectByTopic(TopicSearchRequest request);
+
+    SocialHotResult fetchSocialHot(String platform);
 
     void deleteArticle(Long id);
 

@@ -20,11 +20,6 @@
         <el-select v-model="filterCategory" placeholder="全部" clearable style="width:160px" @change="onCategoryChange">
           <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
         </el-select>
-        <span style="font-size:14px;color:#606266;margin-left:8px">排序：</span>
-        <el-radio-group v-model="sortBy" @change="onSortChange" size="small">
-          <el-radio-button value="hotness">热度</el-radio-button>
-          <el-radio-button value="time">时间</el-radio-button>
-        </el-radio-group>
       </div>
       <el-table :data="tableData" v-loading="loading" border stripe @selection-change="val => selectedRows = val">
         <el-table-column type="selection" width="50" />
@@ -200,7 +195,6 @@ const clusterVisible = ref(false)
 const threshold = ref(0.25)
 
 const filterCategory = ref('')
-const sortBy = ref('hotness')
 const categories = ['社会民生', '科技经济', '教育文化', '医疗卫生', '政治法律', '生态环境', '娱乐体育', '国际时政', '其他']
 
 const sourceVisible = ref(false)
@@ -239,15 +233,10 @@ function onCategoryChange() {
   fetchData()
 }
 
-function onSortChange() {
-  pageNum.value = 1
-  fetchData()
-}
-
 async function fetchData() {
   loading.value = true
   try {
-    const params = { pageNum: pageNum.value, pageSize: pageSize.value, sortBy: sortBy.value }
+    const params = { pageNum: pageNum.value, pageSize: pageSize.value }
     if (filterCategory.value) params.category = filterCategory.value
     const res = await listEvents(params)
     if (res.code === 200) {
@@ -426,14 +415,15 @@ async function doForecastTrend(row) {
       trendMethod.value = res.data.method || 'unknown'
       trendDirection.value = res.data.trend || 'stable'
       trendNote.value = res.data.note || ''
+      trendLoading.value = false
       await nextTick()
       renderTrendChart()
     } else {
       trendError.value = res.message || '趋势预测失败'
+      trendLoading.value = false
     }
   } catch (e) {
     trendError.value = '趋势预测请求失败: ' + e.message
-  } finally {
     trendLoading.value = false
   }
 }

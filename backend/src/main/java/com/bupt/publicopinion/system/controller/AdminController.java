@@ -18,12 +18,9 @@ import com.bupt.publicopinion.system.service.UserService;
 import com.bupt.publicopinion.system.vo.AdminArticleItem;
 import com.bupt.publicopinion.system.vo.AdminEventItem;
 import com.bupt.publicopinion.system.vo.UserInfo;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
-import org.springframework.data.elasticsearch.core.SearchHit;
-import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
-import org.springframework.data.elasticsearch.core.query.Criteria;
-import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,6 +34,7 @@ import org.springframework.web.client.RestClient;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,7 +53,7 @@ public class AdminController {
     private final RestClient contentRestClient;
     private final RestClient intelligenceRestClient;
     private final RestClient reportRestClient;
-    private final ElasticsearchOperations elasticsearchOperations;
+    private final ObjectMapper objectMapper;
     private final Executor crawlTaskExecutor;
 
     public AdminController(
@@ -67,7 +65,7 @@ public class AdminController {
             RestClient contentRestClient,
             RestClient intelligenceRestClient,
             RestClient reportRestClient,
-            ElasticsearchOperations elasticsearchOperations,
+            ObjectMapper objectMapper,
             Executor crawlTaskExecutor
     ) {
         this.userService = userService;
@@ -78,7 +76,7 @@ public class AdminController {
         this.contentRestClient = contentRestClient;
         this.intelligenceRestClient = intelligenceRestClient;
         this.reportRestClient = reportRestClient;
-        this.elasticsearchOperations = elasticsearchOperations;
+        this.objectMapper = objectMapper;
         this.crawlTaskExecutor = crawlTaskExecutor;
     }
 
@@ -298,20 +296,45 @@ public class AdminController {
 
     private ApiResult<PageResult<Map<String, Object>>> queryEsIndex(String index, int pageNum, int pageSize) {
         try {
-            var query = new CriteriaQuery(new Criteria())
-                    .setPageable(PageRequest.of(pageNum - 1, pageSize));
-            var searchHits = elasticsearchOperations.search(query, Object.class, IndexCoordinates.of(index));
-            long total = searchHits.getTotalHits();
+            ObjectNode body = objectMapper.createObjectNode();
+            body.putObject("query").putObject("match_all");
+            body.put("from", (pageNum - 1) * pageSize);
+            body.put("size", pageSize);
+            body.putArray("sort").addObject().put("_score", "desc");
 
-            List<Map<String, Object>> items = searchHits.getSearchHits().stream()
-                    .map(hit -> {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> source = (Map<String, Object>) hit.getContent();
-                        Map<String, Object> item = new LinkedHashMap<>(source);
-                        item.put("_id", hit.getId());
-                        return item;
-                    })
-                    .toList();
+            String response = RestClient.create()
+                    .post()
+                    .uri("http://127.0.0.1:9200/" + index + "/_search")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(body.toString())
+                    .retrieve()
+                    .body(String.class);
+
+            JsonNode root = objectMapper.readTree(response);
+            JsonNode hits = root.path("hits");
+            long total = hits.path("total").path("value").asLong();
+
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (JsonNode hit : hits.path("hits")) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                JsonNode source = hit.path("_source");
+                var fields = source.fields();
+                while (fields.hasNext()) {
+                    var entry = fields.next();
+                    JsonNode value = entry.getValue();
+                    if (value.isTextual()) {
+                        item.put(entry.getKey(), value.asText());
+                    } else if (value.isNumber()) {
+                        item.put(entry.getKey(), value.numberValue());
+                    } else if (value.isBoolean()) {
+                        item.put(entry.getKey(), value.asBoolean());
+                    } else {
+                        item.put(entry.getKey(), value.toString());
+                    }
+                }
+                item.put("_id", hit.path("_id").asText());
+                items.add(item);
+            }
 
             return ApiResult.success(new PageResult<>(items, total, pageNum, pageSize));
         } catch (Exception e) {
@@ -340,9 +363,14 @@ public class AdminController {
 
     private long countEsDocs(String index) {
         try {
-            return elasticsearchOperations.count(
-                    new CriteriaQuery(new Criteria()),
-                    IndexCoordinates.of(index));
+            String response = RestClient.create()
+                    .post()
+                    .uri("http://127.0.0.1:9200/" + index + "/_count")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body("{\"query\":{\"match_all\":{}}}")
+                    .retrieve()
+                    .body(String.class);
+            return objectMapper.readTree(response).path("count").asLong();
         } catch (Exception e) {
             return 0;
         }

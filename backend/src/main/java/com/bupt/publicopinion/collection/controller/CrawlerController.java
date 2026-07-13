@@ -16,6 +16,7 @@ import com.bupt.publicopinion.collection.vo.CrawlerTaskSaveResult;
 import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
+import com.bupt.publicopinion.collection.vo.SocialHotResult;
 import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.common.vo.PageResult;
@@ -160,6 +161,11 @@ public class CrawlerController {
     public ApiResult<BatchTopicResult> searchAndCollectByTopic(@Valid @RequestBody TopicSearchRequest request) {
         BatchTopicResult result = crawlerService.searchAndCollectByTopic(request);
         return ApiResult.success(result);
+    }
+
+    @GetMapping("/social/{platform}/hot")
+    public ApiResult<SocialHotResult> fetchSocialHot(@PathVariable String platform) {
+        return ApiResult.success(crawlerService.fetchSocialHot(platform));
     }
 
     private void requireAdmin() {

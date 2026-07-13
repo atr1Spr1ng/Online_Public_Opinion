@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 import jieba
 import jieba.analyse
 from bs4 import BeautifulSoup
@@ -8,15 +9,41 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from src.model.clean_model import CleanRequest, CleanResponse
 
+logger = logging.getLogger(__name__)
+
 # 短文本阈值：清洗后正文字数少于此值的文章标记为噪音
 MIN_CONTENT_LENGTH = 20
+
+ARTICLE_SUMMARY_SYSTEM_PROMPT = """你是一个专业的文本摘要助手。请将以下新闻正文压缩为一句话中文摘要（30-50字），直接概括核心事实即可。
+
+要求：
+1. 只返回摘要文本，不要加引号、前缀或任何格式标记
+2. 保留关键实体（人名、地名、数字、机构名）
+3. 不要评价，只陈述事实"""
 
 
 class CleanService:
 
     def __init__(self):
         self._stopwords = self._load_stopwords()
+        self._llm_client = None
         jieba.analyse.set_stop_words(self._stopwords_path())
+
+    @property
+    def _llm(self):
+        if self._llm_client is None:
+            api_key = os.getenv("DEEPSEEK_API_KEY", "")
+            if api_key:
+                try:
+                    from openai import OpenAI
+                    self._llm_client = OpenAI(
+                        api_key=api_key,
+                        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                    )
+                    logger.info("CleanService LLM client initialized")
+                except Exception as e:
+                    logger.warning("Failed to init CleanService LLM client: %s", e)
+        return self._llm_client
 
     def clean(self, request: CleanRequest) -> CleanResponse:
         content = request.content or ""
@@ -32,9 +59,11 @@ class CleanService:
 
         # 4. 分词 & 关键词提取（使用停用词过滤）
         keywords = self._extract_keywords(content, topk=10)
-        summary = content[:200] if len(content) > 200 else content
 
-        # 5. 短文本判定：正文过短标记为噪音
+        # 5. LLM 摘要生成，降级为取前三句
+        summary = self._generate_summary(content)
+
+        # 6. 短文本判定：正文过短标记为噪音
         status = "NOISY" if self._is_short_text(content) else "CLEANED"
 
         return CleanResponse(
@@ -45,6 +74,52 @@ class CleanService:
             language=request.language or "zh",
             status=status
         )
+
+    def _generate_summary(self, content: str) -> str:
+        """LLM 摘要生成，降级为提取前三句"""
+        if not content:
+            return ""
+
+        # 1. LLM 摘要
+        if self._llm and len(content) >= 50:
+            llm_summary = self._summarize_by_llm(content)
+            if llm_summary:
+                return llm_summary
+
+        # 2. 降级：取前三句完整句子
+        return self._extract_first_sentences(content)
+
+    def _summarize_by_llm(self, content: str) -> str | None:
+        """调用 LLM 生成摘要，失败返回 None"""
+        try:
+            truncated = content[:1500] if len(content) > 1500 else content
+            response = self._llm.chat.completions.create(
+                model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                messages=[
+                    {"role": "system", "content": ARTICLE_SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": truncated}
+                ],
+                temperature=0.2,
+                max_tokens=120,
+            )
+            result = response.choices[0].message.content
+            if result:
+                result = result.strip().strip('"').strip("'").strip("「").strip("」")
+                if len(result) > 200:
+                    result = result[:200]
+                return result
+        except Exception as e:
+            logger.error("LLM summary failed: %s", e)
+        return None
+
+    def _extract_first_sentences(self, text: str, n: int = 3) -> str:
+        """按句号/问号/感叹号/换行切分，取前 n 个完整句子"""
+        sentences = re.split(r'[。！？\n]', text)
+        parts = [s.strip() for s in sentences[:n] if len(s.strip()) >= 5]
+        if not parts and text:
+            return text[:200]
+        result = "。".join(parts) + "。"
+        return result[:300]
 
     def vectorize(self, texts: list[str]) -> tuple[list[list[float]], int]:
         """对文本列表进行 TF-IDF 向量化，返回 (向量列表, 词汇表大小)"""

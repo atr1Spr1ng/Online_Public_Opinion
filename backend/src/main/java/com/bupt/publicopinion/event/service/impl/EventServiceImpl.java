@@ -198,17 +198,13 @@ public class EventServiceImpl implements EventService {
     }
 
     @Override
-    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category, String sortBy) {
+    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category) {
         Page<Event> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
-                .eq(category != null && !category.isBlank(), Event::getCategory, category);
+                .eq(category != null && !category.isBlank(), Event::getCategory, category)
+                .orderByDesc(Event::getHotness);
         if (!"ADMIN".equals(UserContext.get().role())) {
             wrapper.eq(Event::getUserId, UserContext.get().userId());
-        }
-        if ("time".equals(sortBy)) {
-            wrapper.orderByDesc(Event::getStartTime);
-        } else {
-            wrapper.orderByDesc(Event::getHotness);
         }
         Page<Event> result = eventMapper.selectPage(page, wrapper);
 

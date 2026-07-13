@@ -14,9 +14,8 @@ const routes = [
     redirect: '/dashboard',
     children: [
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/dashboard/index.vue'), meta: { title: '首页', icon: 'HomeFilled' } },
-      { path: 'crawler/source-collect', name: 'SourceCollect', component: () => import('@/views/crawler/source-collect.vue'), meta: { title: '按新闻源采集', icon: 'Collection' } },
-      { path: 'crawler/topic-collect', name: 'TopicCollect', component: () => import('@/views/crawler/topic-collect.vue'), meta: { title: '按话题采集', icon: 'Search' } },
-      { path: 'crawler/articles', name: 'Articles', component: () => import('@/views/crawler/articles.vue'), meta: { title: '原始文章', icon: 'Document' } },
+      { path: 'crawler/batch-collect', name: 'BatchCollect', component: () => import('@/views/crawler/batch-collect.vue'), meta: { title: '批量采集', icon: 'Collection' } },
+      { path: 'crawler/hot-list', name: 'HotList', component: () => import('@/views/crawler/hot-list.vue'), meta: { title: '热搜榜单', icon: 'TrendCharts' } },
       { path: 'content/clean', name: 'CleanArticles', component: () => import('@/views/content/clean.vue'), meta: { title: '清洗文章', icon: 'Brush' } },
       { path: 'analysis/sentiment', name: 'Sentiment', component: () => import('@/views/analysis/sentiment.vue'), meta: { title: '情感分析', icon: 'TrendCharts' } },
       { path: 'event', name: 'Event', component: () => import('@/views/event/index.vue'), meta: { title: '事件管理', icon: 'Opportunity' } },
