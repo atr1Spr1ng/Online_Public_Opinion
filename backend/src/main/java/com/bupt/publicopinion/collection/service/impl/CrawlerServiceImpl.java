@@ -642,7 +642,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         if (pageSize < 1) {
             return 10;
         }
-        return Math.min(pageSize, 100);
+        return Math.min(pageSize, 200);
     }
 
     private boolean isAdmin() {
@@ -660,7 +660,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         if (limit < 1) {
             return 1;
         }
-        return Math.min(limit, 100);
+        return Math.min(limit, 500);
     }
 
     @Override

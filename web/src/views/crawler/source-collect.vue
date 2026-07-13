@@ -145,7 +145,7 @@ async function fetchTasks() {
 
 async function collectOne(row) {
   try {
-    await crawlBySource(row.id, { limit: 5 })
+    await crawlBySource(row.id, { limit: 20 })
     ElMessage.success(`已触发「${row.sourceName}」采集任务`)
     startPolling()
   } catch (e) { ElMessage.error(e.message) }
@@ -155,7 +155,7 @@ async function collectSelected() {
   if (selectedIds.value.length === 0) return
   try {
     for (const id of selectedIds.value) {
-      await crawlBySource(id, { limit: 5 })
+      await crawlBySource(id, { limit: 20 })
     }
     ElMessage.success(`已触发 ${selectedIds.value.length} 个新闻源采集任务，后台执行中`)
     startPolling()

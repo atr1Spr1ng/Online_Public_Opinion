@@ -60,7 +60,7 @@ async function fetchData() {
 
 async function crawlAll() {
   try {
-    const res = await crawlAllEnabled({ limit: 3 })
+    const res = await crawlAllEnabled({ limit: 20 })
     ElMessage.success(`已触发 ${res.totalSources || 0} 个新闻源采集`)
     setTimeout(fetchData, 5000)
     setTimeout(fetchData, 15000)

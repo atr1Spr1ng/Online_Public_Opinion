@@ -22,7 +22,7 @@
           </el-checkbox-group>
         </el-form-item>
         <el-form-item label="每源采集上限">
-          <el-input-number v-model="form.limit" :min="1" :max="10" />
+          <el-input-number v-model="form.limit" :min="1" :max="50" />
         </el-form-item>
       </el-form>
     </el-card>
@@ -64,7 +64,7 @@ const searching = ref(false)
 const results = ref([])
 const savedArticles = ref([])
 const lastKeyword = ref('')
-const form = reactive({ keyword: '', limit: 5 })
+const form = reactive({ keyword: '', limit: 10 })
 
 async function fetchSources() {
   try {

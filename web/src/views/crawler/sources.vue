@@ -129,7 +129,7 @@ async function toggle(row) {
 
 async function crawlSource(row) {
   try {
-    await crawlBySource(row.id, { limit: 3 })
+    await crawlBySource(row.id, { limit: 20 })
     ElMessage.success('采集任务已创建')
   } catch (e) { ElMessage.error(e.message) }
 }

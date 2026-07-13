@@ -11,12 +11,12 @@ public record NewsDiscoverRequest(
         String url,
 
         @Min(value = 1, message = "limit 最小为 1")
-        @Max(value = 100, message = "limit 最大为 100")
+        @Max(value = 500, message = "limit 最大为 500")
         Integer limit
 ) {
     public NewsDiscoverRequest {
         if (limit == null) {
-            limit = 5;
+            limit = 20;
         }
     }
 }
