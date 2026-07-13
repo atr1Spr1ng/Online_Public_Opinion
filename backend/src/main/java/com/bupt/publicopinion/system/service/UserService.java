@@ -49,4 +49,19 @@ public interface UserService {
      * 更新用户启用/禁用状态（管理员）。
      */
     void updateUserStatus(Long userId, Integer status);
+
+    /**
+     * 编辑用户（管理员）。
+     */
+    void updateUser(Long userId, String nickname, String email, String role);
+
+    /**
+     * 重置用户密码（管理员）。
+     */
+    void resetPassword(Long userId, String newPassword);
+
+    /**
+     * 删除用户（管理员）。
+     */
+    void deleteUser(Long userId);
 }

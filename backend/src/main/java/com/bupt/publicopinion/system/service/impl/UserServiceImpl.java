@@ -110,4 +110,29 @@ public class UserServiceImpl implements UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
     }
+
+    @Override
+    public void updateUser(Long userId, String nickname, String email, String role) {
+        User user = new User();
+        user.setId(userId);
+        user.setNickname(nickname);
+        user.setEmail(email);
+        user.setRole(role);
+        user.setUpdatedAt(LocalDateTime.now());
+        userMapper.updateById(user);
+    }
+
+    @Override
+    public void resetPassword(Long userId, String newPassword) {
+        User user = new User();
+        user.setId(userId);
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setUpdatedAt(LocalDateTime.now());
+        userMapper.updateById(user);
+    }
+
+    @Override
+    public void deleteUser(Long userId) {
+        userMapper.deleteById(userId);
+    }
 }

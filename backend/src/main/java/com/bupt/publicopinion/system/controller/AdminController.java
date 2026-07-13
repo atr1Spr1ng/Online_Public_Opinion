@@ -1,17 +1,30 @@
 package com.bupt.publicopinion.system.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.bupt.publicopinion.collection.entity.ArticleRaw;
 import com.bupt.publicopinion.collection.mapper.ArticleRawMapper;
 import com.bupt.publicopinion.common.annotation.RequireAdmin;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.common.vo.PageResult;
+import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
+import com.bupt.publicopinion.event.entity.Event;
 import com.bupt.publicopinion.event.mapper.EventMapper;
 import com.bupt.publicopinion.system.entity.User;
 import com.bupt.publicopinion.system.service.UserService;
+import com.bupt.publicopinion.system.vo.AdminArticleItem;
+import com.bupt.publicopinion.system.vo.AdminEventItem;
 import com.bupt.publicopinion.system.vo.UserInfo;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.Criteria;
+import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -69,6 +82,8 @@ public class AdminController {
         this.crawlTaskExecutor = crawlTaskExecutor;
     }
 
+    // ────────── 用户管理 ──────────
+
     @RequireAdmin
     @GetMapping("/users")
     public ApiResult<PageResult<UserInfo>> listUsers(
@@ -92,13 +107,64 @@ public class AdminController {
         if (status == null || (status != 0 && status != 1)) {
             return ApiResult.error(400, "状态值必须为 0 或 1");
         }
-        // 禁止禁用 admin 账号
+        Long currentUserId = UserContext.get().userId();
+        if (id.equals(currentUserId)) {
+            return ApiResult.error(400, "禁止操作自己的账号");
+        }
         if (id == 1L) {
             return ApiResult.error(400, "禁止禁用超级管理员账号");
         }
         userService.updateUserStatus(id, status);
         return ApiResult.success(status == 1 ? "已启用" : "已禁用");
     }
+
+    @RequireAdmin
+    @PutMapping("/users/{id}")
+    public ApiResult<String> updateUser(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body
+    ) {
+        Long currentUserId = UserContext.get().userId();
+        String role = body.get("role");
+        if (role != null && id.equals(currentUserId)) {
+            return ApiResult.error(400, "禁止修改自己的角色");
+        }
+        if (role != null && id == 1L) {
+            return ApiResult.error(400, "禁止修改超级管理员角色");
+        }
+        userService.updateUser(id, body.get("nickname"), body.get("email"), role);
+        return ApiResult.success("ok");
+    }
+
+    @RequireAdmin
+    @PutMapping("/users/{id}/reset-password")
+    public ApiResult<String> resetPassword(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body
+    ) {
+        String password = body.get("password");
+        if (password == null || password.length() < 6) {
+            return ApiResult.error(400, "密码至少6位");
+        }
+        userService.resetPassword(id, password);
+        return ApiResult.success("密码已重置");
+    }
+
+    @RequireAdmin
+    @DeleteMapping("/users/{id}")
+    public ApiResult<String> deleteUser(@PathVariable Long id) {
+        Long currentUserId = UserContext.get().userId();
+        if (id.equals(currentUserId)) {
+            return ApiResult.error(400, "禁止删除自己的账号");
+        }
+        if (id == 1L) {
+            return ApiResult.error(400, "禁止删除超级管理员账号");
+        }
+        userService.deleteUser(id);
+        return ApiResult.success("已删除");
+    }
+
+    // ────────── 平台统计 ──────────
 
     @RequireAdmin
     @GetMapping("/stats")
@@ -110,12 +176,11 @@ public class AdminController {
 
         LocalDateTime todayStart = LocalDateTime.of(LocalDate.now(), LocalTime.MIN);
         long todayArticles = articleRawMapper.selectCount(
-                new LambdaQueryWrapper<com.bupt.publicopinion.collection.entity.ArticleRaw>()
-                        .ge(com.bupt.publicopinion.collection.entity.ArticleRaw::getCreateTime, todayStart));
-
+                new LambdaQueryWrapper<ArticleRaw>()
+                        .ge(ArticleRaw::getCreateTime, todayStart));
         long todayEvents = eventMapper.selectCount(
-                new LambdaQueryWrapper<com.bupt.publicopinion.event.entity.Event>()
-                        .ge(com.bupt.publicopinion.event.entity.Event::getCreateTime, todayStart));
+                new LambdaQueryWrapper<Event>()
+                        .ge(Event::getCreateTime, todayStart));
 
         long esArticleCount = countEsDocs("article_clean");
         long esEventCount = countEsDocs("events");
@@ -132,12 +197,13 @@ public class AdminController {
         return ApiResult.success(stats);
     }
 
+    // ────────── 服务健康 ──────────
+
     @RequireAdmin
     @GetMapping("/services/health")
     public ApiResult<Map<String, Object>> servicesHealth() {
         Map<String, Object> result = new LinkedHashMap<>();
 
-        // 6 个服务状态
         Map<String, Object> services = new LinkedHashMap<>();
         services.put("Java 后端", mapServiceStatus(true));
         services.put("Python Crawler (8001)", mapServiceStatus(checkService(crawlerRestClient)));
@@ -147,13 +213,6 @@ public class AdminController {
         services.put("Elasticsearch (9200)", mapEsStatus());
         result.put("services", services);
 
-        // ES 索引详情
-        Map<String, Long> esIndices = new LinkedHashMap<>();
-        esIndices.put("article_clean", countEsDocs("article_clean"));
-        esIndices.put("events", countEsDocs("events"));
-        result.put("esIndices", esIndices);
-
-        // 爬虫线程池状态
         if (crawlTaskExecutor instanceof ThreadPoolExecutor tpe) {
             Map<String, Object> pool = new LinkedHashMap<>();
             pool.put("corePoolSize", tpe.getCorePoolSize());
@@ -168,7 +227,97 @@ public class AdminController {
         return ApiResult.success(result);
     }
 
+    // ────────── 数据明细（可下钻） ──────────
+
+    @RequireAdmin
+    @GetMapping("/articles")
+    public ApiResult<PageResult<AdminArticleItem>> listArticles(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize
+    ) {
+        Page<ArticleRaw> page = new Page<>(pageNum, pageSize);
+        IPage<ArticleRaw> result = articleRawMapper.selectPage(page,
+                new LambdaQueryWrapper<ArticleRaw>()
+                        .orderByDesc(ArticleRaw::getCreateTime)
+                        .select(ArticleRaw::getId, ArticleRaw::getTitle, ArticleRaw::getSourceName, ArticleRaw::getCreateTime));
+
+        List<AdminArticleItem> items = result.getRecords().stream().map(AdminArticleItem::fromRaw).toList();
+        return ApiResult.success(new PageResult<>(items, result.getTotal(), pageNum, pageSize));
+    }
+
+    @RequireAdmin
+    @GetMapping("/cleaned-articles")
+    public ApiResult<PageResult<AdminArticleItem>> listCleanedArticles(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize
+    ) {
+        Page<ArticleClean> page = new Page<>(pageNum, pageSize);
+        IPage<ArticleClean> result = articleCleanMapper.selectPage(page,
+                new LambdaQueryWrapper<ArticleClean>()
+                        .orderByDesc(ArticleClean::getCreateTime)
+                        .select(ArticleClean::getId, ArticleClean::getTitle, ArticleClean::getSourceName, ArticleClean::getCreateTime));
+
+        List<AdminArticleItem> items = result.getRecords().stream().map(AdminArticleItem::fromClean).toList();
+        return ApiResult.success(new PageResult<>(items, result.getTotal(), pageNum, pageSize));
+    }
+
+    @RequireAdmin
+    @GetMapping("/events")
+    public ApiResult<PageResult<AdminEventItem>> listEvents(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize
+    ) {
+        Page<Event> page = new Page<>(pageNum, pageSize);
+        IPage<Event> result = eventMapper.selectPage(page,
+                new LambdaQueryWrapper<Event>()
+                        .orderByDesc(Event::getCreateTime));
+
+        List<AdminEventItem> items = result.getRecords().stream().map(AdminEventItem::from).toList();
+        return ApiResult.success(new PageResult<>(items, result.getTotal(), pageNum, pageSize));
+    }
+
+    @RequireAdmin
+    @GetMapping("/es/articles")
+    public ApiResult<PageResult<Map<String, Object>>> listEsArticles(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize
+    ) {
+        return queryEsIndex("article_clean", pageNum, pageSize);
+    }
+
+    @RequireAdmin
+    @GetMapping("/es/events")
+    public ApiResult<PageResult<Map<String, Object>>> listEsEvents(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize
+    ) {
+        return queryEsIndex("events", pageNum, pageSize);
+    }
+
     // ---- helpers ----
+
+    private ApiResult<PageResult<Map<String, Object>>> queryEsIndex(String index, int pageNum, int pageSize) {
+        try {
+            var query = new CriteriaQuery(new Criteria())
+                    .setPageable(PageRequest.of(pageNum - 1, pageSize));
+            var searchHits = elasticsearchOperations.search(query, Object.class, IndexCoordinates.of(index));
+            long total = searchHits.getTotalHits();
+
+            List<Map<String, Object>> items = searchHits.getSearchHits().stream()
+                    .map(hit -> {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> source = (Map<String, Object>) hit.getContent();
+                        Map<String, Object> item = new LinkedHashMap<>(source);
+                        item.put("_id", hit.getId());
+                        return item;
+                    })
+                    .toList();
+
+            return ApiResult.success(new PageResult<>(items, total, pageNum, pageSize));
+        } catch (Exception e) {
+            return ApiResult.success(new PageResult<>(List.of(), 0, pageNum, pageSize));
+        }
+    }
 
     private boolean checkService(RestClient client) {
         try {
@@ -192,8 +341,7 @@ public class AdminController {
     private long countEsDocs(String index) {
         try {
             return elasticsearchOperations.count(
-                    new org.springframework.data.elasticsearch.core.query.CriteriaQuery(
-                            new org.springframework.data.elasticsearch.core.query.Criteria()),
+                    new CriteriaQuery(new Criteria()),
                     IndexCoordinates.of(index));
         } catch (Exception e) {
             return 0;
