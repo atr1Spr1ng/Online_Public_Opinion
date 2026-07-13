@@ -5,7 +5,9 @@
       <template #header>
         <div class="card-header">
           <span>新闻源列表</span>
-          <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:13px;color:#606266">每源采集数：</span>
+            <el-input-number v-model="collectLimit" :min="1" :max="500" size="small" style="width:120px" />
             <el-button type="primary" @click="collectSelected" :disabled="selectedIds.length === 0">
               采集选中 ({{ selectedIds.length }})
             </el-button>
@@ -92,6 +94,7 @@ const sourcesLoading = ref(false)
 const sources = ref([])
 const selectedIds = ref([])
 
+const collectLimit = ref(20)
 const tasksLoading = ref(false)
 const tasks = ref([])
 const selectedTaskRows = ref([])
@@ -145,7 +148,7 @@ async function fetchTasks() {
 
 async function collectOne(row) {
   try {
-    await crawlBySource(row.id, { limit: 20 })
+    await crawlBySource(row.id, { limit: collectLimit.value })
     ElMessage.success(`已触发「${row.sourceName}」采集任务`)
     startPolling()
   } catch (e) { ElMessage.error(e.message) }

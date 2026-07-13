@@ -26,7 +26,7 @@
             <template #header><span>服务状态概要</span></template>
             <el-descriptions :column="1" border>
               <el-descriptions-item v-for="(info, name) in serviceList" :key="name" :label="name">
-                <el-tag :type="info ? 'success' : 'danger'">{{ info ? '运行中' : '离线' }}</el-tag>
+                <el-tag :type="info.alive ? 'success' : 'danger'">{{ info.alive ? '运行中' : '离线' }}</el-tag>
               </el-descriptions-item>
             </el-descriptions>
           </el-card>
@@ -126,13 +126,15 @@ import { getReports } from '@/api/report'
 import { listEvents, getMyFeedEvents } from '@/api/event'
 import { getSystemHealth } from '@/api/auth'
 import { listKeywords, listDomains } from '@/api/user'
+import { getAdminStats, getServicesHealth } from '@/api/admin'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
 const isAdmin = computed(() => userStore.userInfo?.role === 'ADMIN')
 
 const stats = reactive({ articles: 0, cleaned: 0, events: 0, reports: 0 })
-const serviceStatus = ref({})
+const adminStats = reactive({ totalUsers: 0, totalArticles: 0, totalEvents: 0, totalCleaned: 0, todayArticles: 0, todayEvents: 0, esArticleCount: 0, esEventCount: 0 })
+const serviceList = ref({})
 const sentimentData = ref([])
 const chartRef = ref(null)
 const hotEvents = ref([])
@@ -159,8 +161,12 @@ onMounted(async () => {
   // 管理员加载系统状态
   if (isAdmin.value) {
     try {
-      const res = await getSystemHealth()
-      serviceStatus.value = res.data || {}
+      const [statsRes, healthRes] = await Promise.all([
+        getAdminStats().catch(() => ({ data: null })),
+        getServicesHealth().catch(() => ({ data: null }))
+      ])
+      if (statsRes.data) Object.assign(adminStats, statsRes.data)
+      if (healthRes.data) serviceList.value = healthRes.data.services || {}
     } catch (_) {}
   }
 

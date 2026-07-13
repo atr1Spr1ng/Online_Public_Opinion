@@ -101,7 +101,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 
@@ -111,6 +111,12 @@ const userStore = useUserStore()
 const isCollapse = ref(false)
 const isAdmin = computed(() => userStore.userInfo?.role === 'ADMIN')
 const activeMenu = computed(() => route.path.replace(/\/\d+$/, ''))
+
+onMounted(async () => {
+  if (userStore.token && !userStore.userInfo) {
+    try { await userStore.fetchUserInfo() } catch (_) {}
+  }
+})
 
 function handleLogout() {
   userStore.logout()
