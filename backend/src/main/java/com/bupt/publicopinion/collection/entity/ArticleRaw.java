@@ -11,6 +11,7 @@ public class ArticleRaw {
 
     @TableId(type = IdType.AUTO)
     private Long id;
+    private Long userId;
     private String sourceName;
     private String sourceType;
     private String originalUrl;
@@ -36,6 +37,9 @@ public class ArticleRaw {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 
     public String getSourceName() {
         return sourceName;

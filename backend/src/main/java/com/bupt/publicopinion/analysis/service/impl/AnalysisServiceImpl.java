@@ -9,6 +9,7 @@ import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.analysis.mapper.ArticleSentimentMapper;
 import com.bupt.publicopinion.analysis.service.AnalysisService;
 import com.bupt.publicopinion.analysis.vo.SentimentResult;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
@@ -88,6 +89,9 @@ public class AnalysisServiceImpl implements AnalysisService {
             wrapper.eq(ArticleSentiment::getSentiment, sentiment.toUpperCase());
         }
         wrapper.orderByDesc(ArticleSentiment::getCreateTime);
+        if (!"ADMIN".equals(UserContext.get().role())) {
+            wrapper.eq(ArticleSentiment::getUserId, UserContext.get().userId());
+        }
         Page<ArticleSentiment> result = articleSentimentMapper.selectPage(page, wrapper);
         return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
     }
@@ -109,6 +113,7 @@ public class AnalysisServiceImpl implements AnalysisService {
         entity.setNegativeScore(result.negativeScore());
         entity.setConfidence(result.confidence());
         entity.setDetailsJson(result.detailsJson());
+        entity.setUserId(UserContext.get().userId());
         articleSentimentMapper.insert(entity);
         return entity;
     }

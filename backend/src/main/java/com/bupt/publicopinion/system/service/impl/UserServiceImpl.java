@@ -1,8 +1,11 @@
 package com.bupt.publicopinion.system.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.bupt.publicopinion.common.exception.AuthenticationException;
 import com.bupt.publicopinion.common.exception.UserNotFoundException;
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.system.entity.User;
 import com.bupt.publicopinion.system.mapper.UserMapper;
 import com.bupt.publicopinion.system.service.UserService;
@@ -88,5 +91,23 @@ public class UserServiceImpl implements UserService {
         update.setId(userId);
         update.setPassword(passwordEncoder.encode(newPassword));
         userMapper.updateById(update);
+    }
+
+    @Override
+    public PageResult<User> listUsers(int pageNum, int pageSize) {
+        Page<User> page = new Page<>(pageNum, pageSize);
+        IPage<User> result = userMapper.selectPage(page,
+                new LambdaQueryWrapper<User>()
+                        .orderByDesc(User::getCreatedAt));
+        return new PageResult<>(result.getRecords(), result.getTotal(), pageNum, pageSize);
+    }
+
+    @Override
+    public void updateUserStatus(Long userId, Integer status) {
+        User user = new User();
+        user.setId(userId);
+        user.setStatus(status);
+        user.setUpdatedAt(LocalDateTime.now());
+        userMapper.updateById(user);
     }
 }

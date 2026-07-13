@@ -24,7 +24,9 @@ const routes = [
       { path: 'fake', name: 'FakeDetection', component: () => import('@/views/fake/index.vue'), meta: { title: '虚假检测', icon: 'WarningFilled' } },
       { path: 'user/profile', name: 'UserProfile', component: () => import('@/views/user/profile.vue'), meta: { title: '个人信息', icon: 'User' } },
       { path: 'search', name: 'Search', component: () => import('@/views/search/index.vue'), meta: { title: '文章搜索', icon: 'Search' } },
-      { path: 'user/preferences', name: 'UserPreferences', component: () => import('@/views/user/preferences.vue'), meta: { title: '偏好管理', icon: 'Setting' } }
+      { path: 'user/preferences', name: 'UserPreferences', component: () => import('@/views/user/preferences.vue'), meta: { title: '偏好管理', icon: 'Setting' } },
+      { path: 'admin/users', name: 'AdminUsers', component: () => import('@/views/admin/Users.vue'), meta: { title: '用户管理', requireAdmin: true } },
+      { path: 'admin/monitor', name: 'AdminMonitor', component: () => import('@/views/admin/Monitor.vue'), meta: { title: '系统监控', requireAdmin: true } }
     ]
   }
 ]
@@ -40,6 +42,8 @@ router.beforeEach((to, from, next) => {
   if (to.path !== '/login' && !userStore.token) {
     next('/login')
   } else if (to.path === '/login' && userStore.token) {
+    next('/dashboard')
+  } else if (to.meta.requireAdmin && userStore.userInfo?.role !== 'ADMIN') {
     next('/dashboard')
   } else {
     next()

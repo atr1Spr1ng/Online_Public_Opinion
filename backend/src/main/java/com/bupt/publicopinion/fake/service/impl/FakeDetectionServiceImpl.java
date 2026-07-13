@@ -3,6 +3,7 @@ package com.bupt.publicopinion.fake.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
@@ -85,6 +86,9 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
             wrapper.eq(ArticleFakeDetection::getIsFake, isFake ? 1 : 0);
         }
         wrapper.orderByDesc(ArticleFakeDetection::getCreateTime);
+        if (!"ADMIN".equals(UserContext.get().role())) {
+            wrapper.eq(ArticleFakeDetection::getUserId, UserContext.get().userId());
+        }
         Page<ArticleFakeDetection> result = articleFakeDetectionMapper.selectPage(page, wrapper);
         List<FakeDetectionResult> records = result.getRecords().stream().map(this::toVO).toList();
         return new PageResult<>(records, result.getTotal(), result.getCurrent(), result.getSize());
@@ -107,6 +111,7 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
         entity.setDetectionMethod(result.detectionMethod());
         entity.setFeaturesJson(result.featuresJson());
         entity.setDetails(result.details());
+        entity.setUserId(UserContext.get().userId());
         articleFakeDetectionMapper.insert(entity);
         return entity;
     }

@@ -81,6 +81,12 @@
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
+        <!-- AOP -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- Elasticsearch -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

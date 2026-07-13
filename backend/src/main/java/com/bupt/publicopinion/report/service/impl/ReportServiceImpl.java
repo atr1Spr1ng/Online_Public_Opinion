@@ -16,6 +16,7 @@ import com.bupt.publicopinion.report.dto.ReportGenerateRequest;
 import com.bupt.publicopinion.report.entity.Report;
 import com.bupt.publicopinion.report.exception.ReportServiceException;
 import com.bupt.publicopinion.report.mapper.ReportMapper;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.report.service.ReportService;
 import com.bupt.publicopinion.report.vo.QaResultVO;
@@ -135,6 +136,7 @@ public class ReportServiceImpl implements ReportService {
         report.setEventId(event.getId());
         report.setTitle(event.getTitle());
         report.setContentJson(json.toString());
+        report.setUserId(UserContext.get().userId());
         reportMapper.insert(report);
 
         return new ReportVO(report.getId(), report.getEventId(), report.getTitle(),
@@ -156,6 +158,9 @@ public class ReportServiceImpl implements ReportService {
         Page<Report> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Report> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByDesc(Report::getCreateTime);
+        if (!"ADMIN".equals(UserContext.get().role())) {
+            wrapper.eq(Report::getUserId, UserContext.get().userId());
+        }
         Page<Report> result = reportMapper.selectPage(page, wrapper);
         List<ReportVO> records = result.getRecords().stream()
                 .map(r -> new ReportVO(r.getId(), r.getEventId(), r.getTitle(),

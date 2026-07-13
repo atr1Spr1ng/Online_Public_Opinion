@@ -12,6 +12,7 @@ public class ArticleSentiment {
 
     @TableId(type = IdType.AUTO)
     private Long id;
+    private Long userId;
     private Long cleanId;
     private String sentiment;
     private BigDecimal positiveScore;
@@ -23,6 +24,9 @@ public class ArticleSentiment {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 
     public Long getCleanId() { return cleanId; }
     public void setCleanId(Long cleanId) { this.cleanId = cleanId; }

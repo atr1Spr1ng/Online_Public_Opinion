@@ -6,6 +6,29 @@
         <span v-else>舆情</span>
       </div>
       <el-menu
+        v-if="isAdmin"
+        :default-active="activeMenu"
+        router
+        :collapse="isCollapse"
+        background-color="#304156"
+        text-color="#bfcbd9"
+        active-text-color="#409EFF"
+      >
+        <el-menu-item index="/dashboard">
+          <el-icon><HomeFilled /></el-icon>
+          <span>系统概览</span>
+        </el-menu-item>
+        <el-menu-item index="/admin/users">
+          <el-icon><User /></el-icon>
+          <span>用户管理</span>
+        </el-menu-item>
+        <el-menu-item index="/admin/monitor">
+          <el-icon><Monitor /></el-icon>
+          <span>系统监控</span>
+        </el-menu-item>
+      </el-menu>
+      <el-menu
+        v-else
         :default-active="activeMenu"
         router
         :collapse="isCollapse"

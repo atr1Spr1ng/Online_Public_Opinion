@@ -29,6 +29,7 @@ import com.bupt.publicopinion.collection.vo.NewsCollectResult;
 import com.bupt.publicopinion.collection.vo.NewsCrawlResult;
 import com.bupt.publicopinion.collection.vo.NewsDiscoverResult;
 import com.bupt.publicopinion.collection.vo.TopicSearchResult;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -101,7 +102,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         String sourceName = extractDomainName(request.url());
         String sourceType = "manual";
 
-        return saveArticle(article, sourceName, sourceType);
+        return saveArticle(article, sourceName, sourceType, UserContext.get().userId());
     }
 
     private String extractDomainName(String url) {
@@ -134,7 +135,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                         ArticleRaw existing = findArticleByOriginalUrl(article.originalUrl());
                         if (existing != null) continue;
                         if (!"SUCCESS".equals(article.extractStatus())) continue;
-                        ArticleRaw saved = saveArticle(article, searchResult.sourceName(), searchResult.sourceType());
+                        ArticleRaw saved = saveArticle(article, searchResult.sourceName(), searchResult.sourceType(), UserContext.get().userId());
                         result.addArticle(saved);
                     }
                 }
@@ -165,10 +166,12 @@ public class CrawlerServiceImpl implements CrawlerService {
         task.setTotalDuplicate(0);
         task.setTotalFailed(0);
         task.setStatus("RUNNING");
+        task.setUserId(UserContext.get().userId());
         task.setCreateTime(LocalDateTime.now());
         crawlTaskMapper.insert(task);
 
-        CompletableFuture.runAsync(() -> doCrawl(task.getId(), request), crawlTaskExecutor)
+        final Long userId = task.getUserId();
+        CompletableFuture.runAsync(() -> doCrawl(task.getId(), request, userId), crawlTaskExecutor)
                 .exceptionally(ex -> {
                     log.error("异步采集任务 {} 异常: {}", task.getId(), ex.getMessage());
                     return null;
@@ -201,11 +204,13 @@ public class CrawlerServiceImpl implements CrawlerService {
         task.setTotalDuplicate(0);
         task.setTotalFailed(0);
         task.setStatus("RUNNING");
+        task.setUserId(UserContext.get().userId());
         task.setCreateTime(LocalDateTime.now());
         crawlTaskMapper.insert(task);
 
+        final Long userId = task.getUserId();
         CompletableFuture.runAsync(
-                () -> doCrawl(task.getId(), new NewsDiscoverRequest(source.getSourceUrl(), taskLimit)),
+                () -> doCrawl(task.getId(), new NewsDiscoverRequest(source.getSourceUrl(), taskLimit), userId),
                 crawlTaskExecutor
         ).exceptionally(ex -> {
             log.error("异步采集任务 {} 异常: {}", task.getId(), ex.getMessage());
@@ -241,11 +246,13 @@ public class CrawlerServiceImpl implements CrawlerService {
                 task.setTotalDuplicate(0);
                 task.setTotalFailed(0);
                 task.setStatus("RUNNING");
+                task.setUserId(UserContext.get().userId());
                 task.setCreateTime(LocalDateTime.now());
                 crawlTaskMapper.insert(task);
 
+                final Long userId = UserContext.get().userId();
                 CompletableFuture.runAsync(
-                        () -> doCrawl(task.getId(), new NewsDiscoverRequest(source.getSourceUrl(), taskLimit)),
+                        () -> doCrawl(task.getId(), new NewsDiscoverRequest(source.getSourceUrl(), taskLimit), userId),
                         crawlTaskExecutor
                 ).exceptionally(ex -> {
                     log.error("异步采集任务 {} 异常: {}", task.getId(), ex.getMessage());
@@ -275,7 +282,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         );
     }
 
-    private void doCrawl(Long taskId, NewsDiscoverRequest request) {
+    private void doCrawl(Long taskId, NewsDiscoverRequest request, Long userId) {
         try {
             NewsDiscoverResult discoverResult = pythonCrawlerClient.discoverNewsLinks(request);
             NewsSource source = saveOrUpdateSource(
@@ -315,7 +322,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                         continue;
                     }
 
-                    ArticleRaw articleRaw = saveArticle(article, discoverResult.sourceName(), discoverResult.sourceType());
+                    ArticleRaw articleRaw = saveArticle(article, discoverResult.sourceName(), discoverResult.sourceType(), userId);
                     successCount++;
                     saveSuccessTaskItem(taskId, articleRaw);
                 } catch (RuntimeException exception) {
@@ -344,13 +351,15 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     @Override
     public PageResult<CrawlTask> listCrawlTasks(long pageNum, long pageSize) {
+        LambdaQueryWrapper<CrawlTask> taskWrapper = new LambdaQueryWrapper<CrawlTask>()
+                .orderByDesc(CrawlTask::getCreateTime)
+                .orderByDesc(CrawlTask::getId);
+        if (!isAdmin()) {
+            taskWrapper.eq(CrawlTask::getUserId, currentUserId());
+        }
+
         Page<CrawlTask> page = new Page<>(normalizePageNum(pageNum), normalizePageSize(pageSize));
-        Page<CrawlTask> result = crawlTaskMapper.selectPage(
-                page,
-                new LambdaQueryWrapper<CrawlTask>()
-                        .orderByDesc(CrawlTask::getCreateTime)
-                        .orderByDesc(CrawlTask::getId)
-        );
+        Page<CrawlTask> result = crawlTaskMapper.selectPage(page, taskWrapper);
         return new PageResult<>(result.getRecords(), result.getTotal(), result.getCurrent(), result.getSize());
     }
 
@@ -373,6 +382,10 @@ public class CrawlerServiceImpl implements CrawlerService {
 
         if (excludeCleaned) {
             wrapper.notInSql(ArticleRaw::getId, "SELECT raw_id FROM article_clean");
+        }
+
+        if (!isAdmin()) {
+            wrapper.eq(ArticleRaw::getUserId, currentUserId());
         }
 
         Page<ArticleRaw> page = new Page<>(normalizePageNum(pageNum), normalizePageSize(pageSize));
@@ -543,7 +556,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         );
     }
 
-    private ArticleRaw saveArticle(NewsCrawlResult article, String sourceName, String sourceType) {
+    private ArticleRaw saveArticle(NewsCrawlResult article, String sourceName, String sourceType, Long userId) {
         ArticleRaw articleRaw = new ArticleRaw();
         articleRaw.setSourceName(sourceName);
         articleRaw.setSourceType(sourceType);
@@ -560,6 +573,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         articleRaw.setMainImage(article.mainImage());
         articleRaw.setLanguage(article.language());
         articleRaw.setFetchedAt(article.fetchedAt() == null ? null : article.fetchedAt().toLocalDateTime());
+        articleRaw.setUserId(userId);
 
         articleRawMapper.insert(articleRaw);
         return articleRaw;
@@ -629,6 +643,14 @@ public class CrawlerServiceImpl implements CrawlerService {
             return 10;
         }
         return Math.min(pageSize, 100);
+    }
+
+    private boolean isAdmin() {
+        return "ADMIN".equals(UserContext.get().role());
+    }
+
+    private Long currentUserId() {
+        return UserContext.get().userId();
     }
 
     private int normalizeLimit(Integer limit) {

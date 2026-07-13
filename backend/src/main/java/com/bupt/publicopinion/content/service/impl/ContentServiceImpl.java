@@ -9,6 +9,7 @@ import com.bupt.publicopinion.content.dto.CleanRequest;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.exception.ContentServiceException;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.service.ContentService;
 import com.bupt.publicopinion.content.vo.CleanResult;
@@ -83,6 +84,9 @@ public class ContentServiceImpl implements ContentService {
         if (excludeDetected) {
             wrapper.notInSql(ArticleClean::getId, "SELECT clean_id FROM article_fake_detection");
         }
+        if (!"ADMIN".equals(UserContext.get().role())) {
+            wrapper.eq(ArticleClean::getUserId, UserContext.get().userId());
+        }
 
         Page<ArticleClean> page = new Page<>(pageNum, pageSize);
         Page<ArticleClean> result = articleCleanMapper.selectPage(page, wrapper);
@@ -111,6 +115,7 @@ public class ContentServiceImpl implements ContentService {
         }
 
         clean.setSimhash(isDuplicate ? -1L : 0L);
+        clean.setUserId(UserContext.get().userId());
         articleCleanMapper.insert(clean);
     }
 

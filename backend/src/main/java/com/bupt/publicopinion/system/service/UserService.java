@@ -1,5 +1,6 @@
 package com.bupt.publicopinion.system.service;
 
+import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.system.entity.User;
 
 public interface UserService {
@@ -38,4 +39,14 @@ public interface UserService {
      * 修改密码。
      */
     void changePassword(Long userId, String oldPassword, String newPassword);
+
+    /**
+     * 分页查询用户列表（管理员）。
+     */
+    PageResult<User> listUsers(int pageNum, int pageSize);
+
+    /**
+     * 更新用户启用/禁用状态（管理员）。
+     */
+    void updateUserStatus(Long userId, Integer status);
 }

@@ -11,6 +11,7 @@ public class CrawlTask {
 
     @TableId(type = IdType.AUTO)
     private Long id;
+    private Long userId;
     private Long sourceId;
     private String sourceUrl;
     private String finalUrl;
@@ -32,6 +33,9 @@ public class CrawlTask {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 
     public Long getSourceId() {
         return sourceId;

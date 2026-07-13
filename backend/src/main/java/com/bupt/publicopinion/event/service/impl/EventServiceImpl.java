@@ -6,6 +6,7 @@ import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
 import com.bupt.publicopinion.analysis.entity.ArticleSentiment;
 import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.analysis.mapper.ArticleSentimentMapper;
+import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.mapper.ArticleCleanMapper;
@@ -173,6 +174,7 @@ public class EventServiceImpl implements EventService {
                 }
             }
 
+            event.setUserId(UserContext.get().userId());
             eventMapper.insert(event);
 
             for (Long cleanId : item.articleIds()) {
@@ -200,6 +202,9 @@ public class EventServiceImpl implements EventService {
         Page<Event> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
                 .eq(category != null && !category.isBlank(), Event::getCategory, category);
+        if (!"ADMIN".equals(UserContext.get().role())) {
+            wrapper.eq(Event::getUserId, UserContext.get().userId());
+        }
         if ("time".equals(sortBy)) {
             wrapper.orderByDesc(Event::getStartTime);
         } else {
