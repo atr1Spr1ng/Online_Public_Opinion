@@ -214,14 +214,10 @@ public class EventServiceImpl implements EventService {
             event.setCategory(categoryMap.getOrDefault((long) i, "其他"));
 
             if (!item.startTime().isEmpty()) {
-                try {
-                    event.setStartTime(LocalDateTime.parse(item.startTime(), dtf));
-                } catch (Exception ignored) {}
+                event.setStartTime(parseDateTime(item.startTime()));
             }
             if (!item.endTime().isEmpty()) {
-                try {
-                    event.setEndTime(LocalDateTime.parse(item.endTime(), dtf));
-                } catch (Exception ignored) {}
+                event.setEndTime(parseDateTime(item.endTime()));
             }
 
             event.setUserId(userId);
@@ -267,11 +263,18 @@ public class EventServiceImpl implements EventService {
     }
 
     @Override
-    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category) {
+    public PageResult<EventVO> listEvents(long pageNum, long pageSize, String category, String sortBy, String sortOrder) {
         Page<Event> page = new Page<>(pageNum, pageSize);
+        boolean asc = "asc".equalsIgnoreCase(sortOrder);
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
-                .eq(category != null && !category.isBlank(), Event::getCategory, category)
-                .orderByDesc(Event::getHotness);
+                .eq(category != null && !category.isBlank(), Event::getCategory, category);
+        if ("startTime".equals(sortBy)) {
+            if (asc) wrapper.orderByAsc(Event::getStartTime);
+            else wrapper.orderByDesc(Event::getStartTime);
+        } else {
+            if (asc) wrapper.orderByAsc(Event::getHotness);
+            else wrapper.orderByDesc(Event::getHotness);
+        }
         if (!"ADMIN".equals(UserContext.getRequired().role())) {
             wrapper.eq(Event::getUserId, UserContext.getRequired().userId());
         }
@@ -708,6 +711,26 @@ public class EventServiceImpl implements EventService {
 
         Collections.reverse(cluster);
         return cluster;
+    }
+
+    /**
+     * 解析日期时间字符串，支持多种格式：
+     * ISO格式 2026-07-13T00:00:00、标准格式 2026-07-13 00:00:00、纯日期 2026-07-13
+     */
+    private LocalDateTime parseDateTime(String s) {
+        try {
+            return LocalDateTime.parse(s, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        } catch (Exception e1) {
+            try {
+                return LocalDateTime.parse(s, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            } catch (Exception e2) {
+                try {
+                    return LocalDate.parse(s.substring(0, 10)).atStartOfDay();
+                } catch (Exception e3) {
+                    return null;
+                }
+            }
+        }
     }
 
 }

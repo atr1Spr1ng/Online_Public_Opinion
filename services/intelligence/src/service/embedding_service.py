@@ -1,4 +1,5 @@
 import logging
+import time
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -29,11 +30,15 @@ class EmbeddingService:
             try:
                 from sentence_transformers import SentenceTransformer
                 import os
+                # ONNX Runtime 线程数优化，默认单线程在 CPU 上极慢
+                os.environ.setdefault("OMP_NUM_THREADS", "4")
+                os.environ.setdefault("OPENBLAS_NUM_THREADS", "4")
                 if os.path.isdir(EMBEDDING_MODEL_PATH):
                     logger.info("Loading ONNX embedding model from: %s", EMBEDDING_MODEL_PATH)
                     self._model = SentenceTransformer(
                         EMBEDDING_MODEL_PATH,
                         backend="onnx",
+                        model_kwargs={"provider": "CPUExecutionProvider"},
                     )
                 else:
                     logger.info("Loading embedding model (PyTorch fallback): %s", EMBEDDING_MODEL_NAME)
@@ -66,11 +71,16 @@ class EmbeddingService:
         """将文本列表转为归一化的稠密向量矩阵 (N, dim)"""
         if not texts:
             return np.array([]).reshape(0, 0)
+        t0 = time.time()
         clean_texts = [self._sanitize(t) for t in texts]
+        t1 = time.time()
         embeddings = self.model.encode(
             clean_texts,
             normalize_embeddings=True,  # L2归一化 → 欧氏距离 ≈ 1-余弦相似度
             show_progress_bar=False,
             batch_size=32,
         )
+        t2 = time.time()
+        logger.info("[EMBED] sanitize=%.2fs encode=%.2fs total=%.2fs for %d texts",
+                    t1 - t0, t2 - t1, t2 - t0, len(texts))
         return np.array(embeddings)

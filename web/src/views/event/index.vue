@@ -21,7 +21,8 @@
           <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
         </el-select>
       </div>
-      <el-table :data="tableData" v-loading="loading" border stripe @selection-change="val => selectedRows = val">
+      <el-table :data="tableData" v-loading="loading" border stripe @selection-change="val => selectedRows = val"
+        @sort-change="onSortChange" :default-sort="{prop: 'hotness', order: 'descending'}">
         <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="title" label="事件标题" min-width="200" show-overflow-tooltip />
@@ -32,7 +33,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="articleCount" label="文章数" width="80" />
-        <el-table-column prop="hotness" label="热度" width="80" />
+        <el-table-column prop="hotness" label="热度" width="80" sortable="custom" />
         <el-table-column label="情感" width="150">
           <template #default="{ row }">
             <template v-if="row.sentimentPositive != null">
@@ -50,7 +51,7 @@
             <el-tag :type="lifecycleType(row.lifecycle)">{{ row.lifecycle }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="startTime" label="开始时间" width="170" />
+        <el-table-column prop="startTime" label="开始时间" width="170" sortable="custom" />
         <el-table-column label="操作" width="330">
           <template #default="{ row }">
             <el-button type="info" link @click="goDetail(row)">详情</el-button>
@@ -210,6 +211,8 @@ const selectedRows = ref([])
 const total = ref(0)
 const pageNum = ref(1)
 const pageSize = ref(10)
+const sortBy = ref('hotness')
+const sortOrder = ref('desc')
 
 const clustering = ref(false)
 const clusterVisible = ref(false)
@@ -260,10 +263,17 @@ function onCategoryChange() {
   fetchData()
 }
 
+function onSortChange({ prop, order }) {
+  sortBy.value = prop || 'hotness'
+  sortOrder.value = order === 'ascending' ? 'asc' : 'desc'
+  pageNum.value = 1
+  fetchData()
+}
+
 async function fetchData() {
   loading.value = true
   try {
-    const params = { pageNum: pageNum.value, pageSize: pageSize.value }
+    const params = { pageNum: pageNum.value, pageSize: pageSize.value, sortBy: sortBy.value, sortOrder: sortOrder.value }
     if (filterCategory.value) params.category = filterCategory.value
     const res = await listEvents(params)
     if (res.code === 200) {

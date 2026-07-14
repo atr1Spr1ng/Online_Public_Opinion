@@ -23,6 +23,7 @@ public class Event {
     private String category;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
     @TableField(fill = FieldFill.UPDATE)
     private LocalDateTime updateTime;

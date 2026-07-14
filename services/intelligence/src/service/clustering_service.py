@@ -1,6 +1,7 @@
 import math
 import json
 import re
+import time
 import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -34,6 +35,7 @@ class ClusteringService:
         return self._llm_client
 
     def cluster(self, articles: list[ArticleItem], threshold: float = 0.25) -> ClusterResponse:
+        t0 = time.time()
         total_input = len(articles)
         logger.info("=" * 60)
         logger.info("Clustering START: %d articles, threshold=%.2f", total_input, threshold)
@@ -47,7 +49,9 @@ class ClusteringService:
             keyword_sets[a.id] = set(k.strip() for k in kw.split(",") if k.strip())
 
         # 1. 稠密向量 + HDBSCAN 聚类（主力）
+        t1 = time.time()
         clusters, hdbscan_noise = self._cluster_by_hdbscan(articles)
+        logger.info("[TIMING] Step1 HDBSCAN: %.1fs", time.time() - t1)
         if clusters is not None:
             cluster_articles = sum(len(c["articles"]) for c in clusters)
             non_noise_clusters = [c for c in clusters if not c.get("_noise")]
@@ -61,8 +65,10 @@ class ClusteringService:
         noise_count = hdbscan_noise
 
         # 后处理：簇内一致性剪枝，剔除与簇中心余弦距离过远的离群文章
+        t2 = time.time()
         before_prune_articles = sum(len(c["articles"]) for c in clusters)
         clusters, pruned_count = self._prune_cluster_outliers(clusters)
+        logger.info("[TIMING] Step2 Prune: %.1fs", time.time() - t2)
         after_prune_articles = sum(len(c["articles"]) for c in clusters)
         if pruned_count > 0:
             noise_count += pruned_count
@@ -72,8 +78,10 @@ class ClusteringService:
             logger.info("[Step 2] Prune: 0 articles removed")
 
         # 后处理：合并语义高度相似的簇（簇中心余弦相似度 ≥ 0.92），防 HDBSCAN 把同一事件拆散
+        t3 = time.time()
         merged_count = len(clusters)
         clusters = self._merge_similar_clusters(clusters, threshold=0.92)
+        logger.info("[TIMING] Step3 Merge: %.1fs", time.time() - t3)
         merged_count = merged_count - len(clusters)
         if merged_count > 0:
             logger.info("[Step 3] Merge: merged %d similar clusters, now %d total", merged_count, len(clusters))
@@ -99,6 +107,7 @@ class ClusteringService:
             title, top_keywords = self._generate_event_name(arts, keyword_sets)
             return (idx, title, top_keywords)
 
+        t4 = time.time()
         names_by_idx: dict[int, tuple[str, list[str]]] = {}
         if valid_clusters:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -107,6 +116,7 @@ class ClusteringService:
                 for future in as_completed(futures):
                     idx, title, top_keywords = future.result()
                     names_by_idx[idx] = (title, top_keywords)
+        logger.info("[TIMING] Step4 LLM Naming (%d clusters): %.1fs", len(valid_clusters), time.time() - t4)
 
         for i, cluster in enumerate(valid_clusters):
             event_id = i + 1
@@ -137,6 +147,8 @@ class ClusteringService:
 
         events.sort(key=lambda e: e.hotness, reverse=True)
 
+        logger.info("[TIMING] TOTAL cluster(): %.1fs (%.1fs since start)", time.time() - t4, time.time() - t0)
+
         return ClusterResponse(
             events=events,
             total_articles=len(articles),
@@ -161,11 +173,14 @@ class ClusteringService:
             for a in articles:
                 title = a.title or ""
                 summary = a.summary or ""
-                texts.append(f"{title} {summary}"[:512])
+                texts.append(f"{title} {summary}"[:256])
 
+            t_encode = time.time()
             vectors = embed_service.encode(texts)
             if vectors.shape[0] == 0:
                 return None, 0
+
+            logger.info("[HDBSCAN internal] encode done: %.1fs, starting HDBSCAN fit...", time.time() - t_encode)
 
             # HDBSCAN 聚类
             import hdbscan
@@ -176,6 +191,7 @@ class ClusteringService:
                 cluster_selection_epsilon=0.08,
             )
             labels = clusterer.fit_predict(vectors)
+            logger.info("[HDBSCAN internal] fit_predict done: %.1fs", time.time() - t_encode)
             logger.info("HDBSCAN: %d clusters found, noise=%d",
                         len(set(labels)) - (1 if -1 in labels else 0),
                         (labels == -1).sum())

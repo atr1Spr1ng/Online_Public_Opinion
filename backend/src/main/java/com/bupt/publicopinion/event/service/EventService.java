@@ -12,7 +12,7 @@ public interface EventService {
 
     Map<String, Object> clusterAndSave(double threshold);
 
-    PageResult<EventVO> listEvents(long pageNum, long pageSize, String category);
+    PageResult<EventVO> listEvents(long pageNum, long pageSize, String category, String sortBy, String sortOrder);
 
     EventDetailVO getEvent(Long id);
 
