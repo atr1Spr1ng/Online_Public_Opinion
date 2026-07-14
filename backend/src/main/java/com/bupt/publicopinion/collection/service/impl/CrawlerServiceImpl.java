@@ -44,6 +44,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class CrawlerServiceImpl implements CrawlerService {
@@ -103,7 +105,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         String sourceName = extractDomainName(request.url());
         String sourceType = "manual";
 
-        return saveArticle(article, sourceName, sourceType, UserContext.get().userId());
+        return saveArticle(article, sourceName, sourceType, getCurrentUser().userId());
     }
 
     private String extractDomainName(String url) {
@@ -122,29 +124,52 @@ public class CrawlerServiceImpl implements CrawlerService {
     public BatchTopicResult searchAndCollectByTopic(TopicSearchRequest request) {
         List<NewsSource> sources = newsSourceMapper.selectBatchIds(request.getSourceIds());
         BatchTopicResult result = BatchTopicResult.empty(request.getKeyword(), sources.size());
+        final Long userId = getCurrentUser().userId();
 
+        // Parallel multi-source search
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (NewsSource source : sources) {
-            try {
-                TopicSearchResult searchResult = pythonCrawlerClient.searchByTopic(
-                        new PythonTopicSearchRequest(request.getKeyword(), source.getSourceUrl(), request.getLimit())
-                );
-                result.addResult(searchResult.sourceName(), searchResult.totalFound(),
-                        searchResult.totalSuccess(), searchResult.totalFailed());
+            futures.add(CompletableFuture.runAsync(() -> {
+                TopicSearchResult searchResult;
+                try {
+                    searchResult = pythonCrawlerClient.searchByTopic(
+                            new PythonTopicSearchRequest(request.getKeyword(), source.getSourceUrl(), request.getLimit())
+                    );
+                } catch (Exception e) {
+                    log.warn("搜索新闻源 {} ({}) 失败: {}", source.getSourceName(), source.getSourceUrl(), e.getMessage());
+                    synchronized (result) {
+                        result.addResult(source.getSourceName(), 0, 0, 1);
+                    }
+                    return;
+                }
+
+                synchronized (result) {
+                    result.addResult(searchResult.sourceName(), searchResult.totalFound(),
+                            searchResult.totalSuccess(), searchResult.totalFailed());
+                }
 
                 if (searchResult.articles() != null) {
                     for (NewsCrawlResult article : searchResult.articles()) {
-                        ArticleRaw existing = findArticleByOriginalUrl(article.originalUrl());
-                        if (existing != null) continue;
                         if (!"SUCCESS".equals(article.extractStatus())) continue;
-                        ArticleRaw saved = saveArticle(article, searchResult.sourceName(), searchResult.sourceType(), UserContext.get().userId());
-                        result.addArticle(saved);
+                        try {
+                            ArticleRaw existing = findArticleByOriginalUrl(article.originalUrl());
+                            if (existing != null) continue;
+                            ArticleRaw saved = saveArticle(article, searchResult.sourceName(), searchResult.sourceType(), userId);
+                            synchronized (result) {
+                                result.addArticle(saved);
+                            }
+                        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                            // Concurrent duplicate insert by another source — skip silently
+                        } catch (Exception e) {
+                            log.warn("保存文章失败 {}: {}", article.title(), e.getMessage());
+                        }
                     }
                 }
-            } catch (Exception e) {
-                log.warn("搜索新闻源 {} ({}) 失败: {}", source.getSourceName(), source.getSourceUrl(), e.getMessage());
-                result.addResult(source.getSourceName(), 0, 0, 1);
-            }
+            }, crawlTaskExecutor));
         }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        // Overwrite Python-reported totalSuccess with actual DB insert count
+        result.setTotalSuccess(result.getSavedArticles().size());
         return result;
     }
 
@@ -172,7 +197,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         task.setTotalDuplicate(0);
         task.setTotalFailed(0);
         task.setStatus("RUNNING");
-        task.setUserId(UserContext.get().userId());
+        task.setUserId(getCurrentUser().userId());
         task.setCreateTime(LocalDateTime.now());
         crawlTaskMapper.insert(task);
 
@@ -210,7 +235,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         task.setTotalDuplicate(0);
         task.setTotalFailed(0);
         task.setStatus("RUNNING");
-        task.setUserId(UserContext.get().userId());
+        task.setUserId(getCurrentUser().userId());
         task.setCreateTime(LocalDateTime.now());
         crawlTaskMapper.insert(task);
 
@@ -252,11 +277,11 @@ public class CrawlerServiceImpl implements CrawlerService {
                 task.setTotalDuplicate(0);
                 task.setTotalFailed(0);
                 task.setStatus("RUNNING");
-                task.setUserId(UserContext.get().userId());
+                task.setUserId(getCurrentUser().userId());
                 task.setCreateTime(LocalDateTime.now());
                 crawlTaskMapper.insert(task);
 
-                final Long userId = UserContext.get().userId();
+                final Long userId = getCurrentUser().userId();
                 CompletableFuture.runAsync(
                         () -> doCrawl(task.getId(), new NewsDiscoverRequest(source.getSourceUrl(), taskLimit), userId),
                         crawlTaskExecutor
@@ -306,43 +331,62 @@ public class CrawlerServiceImpl implements CrawlerService {
             task.setTotalDiscovered(discoverResult.totalFound());
             crawlTaskMapper.updateById(task);
 
-            int successCount = 0;
-            int duplicateCount = 0;
-            int failedCount = 0;
+            AtomicInteger successCount = new AtomicInteger(0);
+            AtomicInteger duplicateCount = new AtomicInteger(0);
+            AtomicInteger failedCount = new AtomicInteger(0);
 
+            // Parallel article crawling with bounded concurrency
+            Semaphore sem = new Semaphore(5);
+            List<CompletableFuture<Void>> linkFutures = new ArrayList<>();
             for (DiscoveredNewsLink link : discoverResult.links()) {
-                ArticleRaw existing = findArticleByOriginalUrl(link.url());
-                if (existing != null) {
-                    duplicateCount++;
-                    saveDuplicateTaskItem(taskId, existing);
-                    continue;
-                }
-
-                try {
-                    NewsCrawlResult article = pythonCrawlerClient.crawlNews(new NewsCrawlRequest(link.url()));
-                    if (!"SUCCESS".equals(article.extractStatus())) {
-                        failedCount++;
-                        saveFailedTaskItem(taskId, new FailedNewsCrawl(
-                                link.url(), link.title(), article.message()
-                        ));
-                        continue;
+                linkFutures.add(CompletableFuture.runAsync(() -> {
+                    try {
+                        sem.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
                     }
+                    try {
+                        ArticleRaw existing = findArticleByOriginalUrl(link.url());
+                        if (existing != null) {
+                            duplicateCount.incrementAndGet();
+                            saveDuplicateTaskItem(taskId, existing);
+                            return;
+                        }
 
-                    ArticleRaw articleRaw = saveArticle(article, discoverResult.sourceName(), discoverResult.sourceType(), userId);
-                    successCount++;
-                    saveSuccessTaskItem(taskId, articleRaw);
-                } catch (RuntimeException exception) {
-                    failedCount++;
-                    saveFailedTaskItem(taskId, new FailedNewsCrawl(
-                            link.url(), link.title(), exception.getMessage()
-                    ));
-                }
+                        try {
+                            NewsCrawlResult article = pythonCrawlerClient.crawlNews(new NewsCrawlRequest(link.url()));
+                            if (!"SUCCESS".equals(article.extractStatus())) {
+                                failedCount.incrementAndGet();
+                                saveFailedTaskItem(taskId, new FailedNewsCrawl(
+                                        link.url(), link.title(), article.message()
+                                ));
+                                return;
+                            }
+
+                            ArticleRaw articleRaw = saveArticle(article, discoverResult.sourceName(), discoverResult.sourceType(), userId);
+                            successCount.incrementAndGet();
+                            saveSuccessTaskItem(taskId, articleRaw);
+                        } catch (RuntimeException exception) {
+                            failedCount.incrementAndGet();
+                            saveFailedTaskItem(taskId, new FailedNewsCrawl(
+                                    link.url(), link.title(), exception.getMessage()
+                            ));
+                        }
+                    } finally {
+                        sem.release();
+                    }
+                }));
             }
+            CompletableFuture.allOf(linkFutures.toArray(new CompletableFuture[0])).join();
 
-            task.setTotalSuccess(successCount);
-            task.setTotalDuplicate(duplicateCount);
-            task.setTotalFailed(failedCount);
-            task.setStatus(resolveTaskStatus(successCount, duplicateCount, failedCount));
+            int sc = successCount.get();
+            int dc = duplicateCount.get();
+            int fc = failedCount.get();
+            task.setTotalSuccess(sc);
+            task.setTotalDuplicate(dc);
+            task.setTotalFailed(fc);
+            task.setStatus(resolveTaskStatus(sc, dc, fc));
             crawlTaskMapper.updateById(task);
         } catch (Exception e) {
             log.error("采集任务 {} 执行失败: {}", taskId, e.getMessage());
@@ -651,12 +695,20 @@ public class CrawlerServiceImpl implements CrawlerService {
         return Math.min(pageSize, 200);
     }
 
+    private UserContext.UserContextInfo getCurrentUser() {
+        UserContext.UserContextInfo user = UserContext.get();
+        if (user == null) {
+            throw new IllegalStateException("当前未登录或会话已过期，请重新登录");
+        }
+        return user;
+    }
+
     private boolean isAdmin() {
-        return "ADMIN".equals(UserContext.get().role());
+        return "ADMIN".equals(getCurrentUser().role());
     }
 
     private Long currentUserId() {
-        return UserContext.get().userId();
+        return getCurrentUser().userId();
     }
 
     private int normalizeLimit(Integer limit) {

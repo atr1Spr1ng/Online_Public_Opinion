@@ -110,7 +110,7 @@ async function fetchRawArticles() {
     const res = await getArticles({ pageNum: rawPage.pageNum, pageSize: rawPage.pageSize, excludeCleaned: true })
     rawArticles.value = res.data?.records || res.data || []
     rawTotal.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { rawLoading.value = false }
 }
 
@@ -129,7 +129,7 @@ async function fetchCleanedArticles() {
     const res = await getCleanArticles({ pageNum: cleanPage.pageNum, pageSize: cleanPage.pageSize })
     cleanedArticles.value = res.data?.records || res.data || []
     cleanTotal.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { cleanLoading.value = false }
 }
 
@@ -146,7 +146,7 @@ async function batchDeleteRaw() {
     selected.value = []
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function cleanSingle(row) {
@@ -155,7 +155,7 @@ async function cleanSingle(row) {
     ElMessage.success(`「${row.title || row.id}」清洗完成`)
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchClean() {
@@ -165,7 +165,7 @@ async function batchClean() {
     selected.value = []
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 function showDetail(row) { detail.value = row; detailVisible.value = true }
@@ -176,7 +176,7 @@ async function handleDelete(row) {
     ElMessage.success('清洗记录已删除')
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchDeleteCleaned() {
@@ -190,7 +190,7 @@ async function batchDeleteCleaned() {
     selectedCleanedRows.value = []
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 onMounted(() => {

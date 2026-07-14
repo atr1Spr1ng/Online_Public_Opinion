@@ -36,7 +36,7 @@ async function handleTrace() {
     const res = await traceSource(eventId.value)
     result.value = res.data
     ElMessage.success('溯源完成')
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { tracing.value = false }
 }
 </script>

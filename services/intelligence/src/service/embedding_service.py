@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 # m3e-large: moka.ai 出品，1024维，~400MB，中文优化，比 BGE-small 更准但推理稍慢
 # 备选：BAAI/bge-base-zh-v1.5 (768维)、BAAI/bge-small-zh-v1.5 (384维，轻量)
 EMBEDDING_MODEL_NAME = "moka-ai/m3e-large"
+EMBEDDING_MODEL_PATH = "D:/huggingface_cache/m3e-large-onnx"  # 预导出的 ONNX 模型，首次需运行: python -m optimum.exporters.onnx --model moka-ai/m3e-large --task feature-extraction D:/huggingface_cache/m3e-large-onnx
 HF_CACHE_DIR = "D:/huggingface_cache"
 
 
@@ -27,12 +28,20 @@ class EmbeddingService:
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                logger.info("Loading embedding model: %s", EMBEDDING_MODEL_NAME)
-                self._model = SentenceTransformer(
-                    EMBEDDING_MODEL_NAME,
-                    cache_folder=HF_CACHE_DIR,
-                    model_kwargs={"cache_dir": HF_CACHE_DIR},
-                )
+                import os
+                if os.path.isdir(EMBEDDING_MODEL_PATH):
+                    logger.info("Loading ONNX embedding model from: %s", EMBEDDING_MODEL_PATH)
+                    self._model = SentenceTransformer(
+                        EMBEDDING_MODEL_PATH,
+                        backend="onnx",
+                    )
+                else:
+                    logger.info("Loading embedding model (PyTorch fallback): %s", EMBEDDING_MODEL_NAME)
+                    self._model = SentenceTransformer(
+                        EMBEDDING_MODEL_NAME,
+                        cache_folder=HF_CACHE_DIR,
+                        model_kwargs={"cache_dir": HF_CACHE_DIR},
+                    )
                 logger.info("Embedding model loaded, dim=%d", self._model.get_sentence_embedding_dimension())
             except Exception as e:
                 logger.error("Failed to load embedding model: %s", e)

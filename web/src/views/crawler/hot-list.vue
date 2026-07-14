@@ -137,9 +137,7 @@ async function doCollect() {
       ElMessage.info(`未找到与「${collectForm.title}」相关的文章`)
     }
     collectVisible.value = false
-  } catch (e) {
-    ElMessage.error(e.message || '采集失败')
-  } finally {
+  } catch {} finally {
     collecting.value = false
   }
 }

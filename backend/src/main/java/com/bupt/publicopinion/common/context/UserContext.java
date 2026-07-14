@@ -19,6 +19,17 @@ public final class UserContext {
         return CONTEXT.get();
     }
 
+    /**
+     * 获取当前用户上下文，为 null 时抛出明确异常而非 NPE。
+     */
+    public static UserContextInfo getRequired() {
+        UserContextInfo user = CONTEXT.get();
+        if (user == null) {
+            throw new IllegalStateException("当前未登录或会话已过期，请重新登录");
+        }
+        return user;
+    }
+
     public static void clear() {
         CONTEXT.remove();
     }

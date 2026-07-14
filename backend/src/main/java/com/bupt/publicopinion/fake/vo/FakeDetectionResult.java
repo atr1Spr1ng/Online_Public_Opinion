@@ -11,10 +11,12 @@ public record FakeDetectionResult(
         String detectionMethod,
         String featuresJson,
         String details,
-        LocalDateTime createTime
+        LocalDateTime createTime,
+        String title,
+        String originalUrl
 ) {
 
     public static FakeDetectionResult failed(Long cleanId, String error) {
-        return new FakeDetectionResult(null, cleanId, null, null, null, null, error, null);
+        return new FakeDetectionResult(null, cleanId, null, null, null, null, error, null, null, null);
     }
 }

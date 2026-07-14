@@ -136,7 +136,7 @@ public class ReportServiceImpl implements ReportService {
         report.setEventId(event.getId());
         report.setTitle(event.getTitle());
         report.setContentJson(json.toString());
-        report.setUserId(UserContext.get().userId());
+        report.setUserId(UserContext.getRequired().userId());
         reportMapper.insert(report);
 
         return new ReportVO(report.getId(), report.getEventId(), report.getTitle(),
@@ -158,8 +158,8 @@ public class ReportServiceImpl implements ReportService {
         Page<Report> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Report> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByDesc(Report::getCreateTime);
-        if (!"ADMIN".equals(UserContext.get().role())) {
-            wrapper.eq(Report::getUserId, UserContext.get().userId());
+        if (!"ADMIN".equals(UserContext.getRequired().role())) {
+            wrapper.eq(Report::getUserId, UserContext.getRequired().userId());
         }
         Page<Report> result = reportMapper.selectPage(page, wrapper);
         List<ReportVO> records = result.getRecords().stream()

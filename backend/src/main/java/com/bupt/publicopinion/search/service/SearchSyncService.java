@@ -228,7 +228,7 @@ public class SearchSyncService {
         NativeQuery query = NativeQuery.builder()
                 .withQuery(q -> q
                         .multiMatch(mm -> mm
-                                .fields("title", "keywords")
+                                .fields("title^3", "keywords^2")
                                 .query(keyword)
                                 .type(TextQueryType.BestFields)
                         )
@@ -237,11 +237,16 @@ public class SearchSyncService {
                 .build();
 
         SearchHits<EventDocument> hits = elasticsearchOperations.search(query, EventDocument.class);
+
+        float maxScore = hits.getMaxScore();
+        float minScore = maxScore * 0.3f;
+
         List<EventDocument> results = hits.getSearchHits().stream()
+                .filter(h -> h.getScore() >= minScore)
                 .map(h -> h.getContent())
                 .toList();
         return new org.springframework.data.domain.PageImpl<>(
-                results, PageRequest.of(pageNum - 1, pageSize), hits.getTotalHits()
+                results, PageRequest.of(pageNum - 1, pageSize), results.size()
         );
     }
 
@@ -263,8 +268,12 @@ public class SearchSyncService {
                 .build();
 
         SearchHits<EventDocument> hits = elasticsearchOperations.search(query, EventDocument.class);
+
+        // more_like_this 的 _score 不是 0-1 范围，归一化到 0-1
+        float maxScore = hits.getMaxScore();
         return hits.getSearchHits().stream()
-                .map(h -> new EventSimilarHit(h.getContent(), h.getScore()))
+                .map(h -> new EventSimilarHit(h.getContent(),
+                        maxScore > 0 ? (double) (h.getScore() / maxScore) : 0.0))
                 .toList();
     }
 

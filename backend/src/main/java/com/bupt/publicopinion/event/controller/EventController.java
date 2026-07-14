@@ -42,7 +42,7 @@ public class EventController {
 
     @PostMapping("/similar")
     public ApiResult<?> findSimilar(@RequestBody @Valid SimilarEventRequest request) {
-        return ApiResult.success(eventService.findSimilarEvents(request.keywords(), request.topK()));
+        return ApiResult.success(eventService.findSimilarEvents(request.getKeywords(), request.getTopK()));
     }
 
     @GetMapping("/{id}")

@@ -4,6 +4,14 @@ export function listEvents(params) {
   return request({ url: '/events', method: 'get', params })
 }
 
+export function searchEvents(params) {
+  return request({ url: '/events/search', method: 'get', params })
+}
+
+export function findSimilarEvents(data) {
+  return request({ url: '/events/similar', method: 'post', data })
+}
+
 export function getEvent(id) {
   return request({ url: `/events/${id}`, method: 'get' })
 }

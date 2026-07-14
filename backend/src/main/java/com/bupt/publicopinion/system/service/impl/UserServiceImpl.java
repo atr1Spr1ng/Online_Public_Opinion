@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
+
 @Service
 public class UserServiceImpl implements UserService {
 
@@ -77,7 +78,6 @@ public class UserServiceImpl implements UserService {
         user.setId(userId);
         user.setNickname(nickname);
         user.setEmail(email);
-        user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
     }
 
@@ -107,7 +107,6 @@ public class UserServiceImpl implements UserService {
         User user = new User();
         user.setId(userId);
         user.setStatus(status);
-        user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
     }
 
@@ -118,7 +117,6 @@ public class UserServiceImpl implements UserService {
         user.setNickname(nickname);
         user.setEmail(email);
         user.setRole(role);
-        user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
     }
 
@@ -127,7 +125,6 @@ public class UserServiceImpl implements UserService {
         User user = new User();
         user.setId(userId);
         user.setPassword(passwordEncoder.encode(newPassword));
-        user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
     }
 

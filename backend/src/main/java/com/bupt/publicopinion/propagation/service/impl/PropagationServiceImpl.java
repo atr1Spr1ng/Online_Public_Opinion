@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class PropagationServiceImpl implements PropagationService {
@@ -81,7 +82,15 @@ public class PropagationServiceImpl implements PropagationService {
         List<ArticleClean> sortedArticles = articles.stream()
                 .sorted(Comparator.comparing(a -> parseTime(effectiveTime(a))))
                 .toList();
-        ArticleClean sourceArticle = sortedArticles.get(0);
+
+        // 时间间隙分组：>90天间隙视为不同活跃期，指标基于近期集群
+        List<ArticleClean> mainCluster = extractMainCluster(sortedArticles);
+        if (mainCluster.size() < sortedArticles.size()) {
+            System.out.println("[Propagation] 检测到 " + (sortedArticles.size() - mainCluster.size())
+                    + " 篇历史文章（>90天间隙），指标基于近期 " + mainCluster.size() + " 篇计算");
+        }
+
+        ArticleClean sourceArticle = mainCluster.get(0);
 
         // ── 尝试调用 Python 传播分析 ──
         Map<String, Object> pythonResult = null;
@@ -90,8 +99,9 @@ public class PropagationServiceImpl implements PropagationService {
             payload.put("event_id", event.getId());
             payload.put("event_title", event.getTitle() != null ? event.getTitle() : "");
 
+            // 只传主力集群给 Python，避免历史文章抢占源头角色
             List<Map<String, Object>> pyArticles = new ArrayList<>();
-            for (ArticleClean a : articles) {
+            for (ArticleClean a : mainCluster) {
                 Map<String, Object> pa = new HashMap<>();
                 pa.put("id", a.getId());
                 pa.put("title", a.getTitle() != null ? a.getTitle() : "");
@@ -126,7 +136,7 @@ public class PropagationServiceImpl implements PropagationService {
 
         List<PropagationNode> childNodes = new ArrayList<>();
         if (pythonResult != null) {
-            // Python 成功：使用 Python 的 nodes/edges 结果
+            // Python 成功：使用 PythonIntelligenceClient 已翻译的 nodes/edges
             List<Map<String, Object>> pyNodes = (List<Map<String, Object>>) pythonResult.getOrDefault("nodes", List.of());
             for (Map<String, Object> pn : pyNodes) {
                 int cleanId = toInt(pn.get("cleanId"));
@@ -155,17 +165,32 @@ public class PropagationServiceImpl implements PropagationService {
         allNodes.add(sourceNode);
         allNodes.addAll(childNodes);
 
-        BigDecimal durationHours = calcDuration(sortedArticles);
-        BigDecimal spreadSpeed = BigDecimal.valueOf(sortedArticles.size())
+        // 追加历史文章节点到 DB 和 allNodes
+        for (ArticleClean a : sortedArticles) {
+            if (!mainCluster.contains(a)) {
+                PropagationNode hn = new PropagationNode();
+                hn.setPathId(path.getId());
+                hn.setCleanId(a.getId());
+                hn.setSourceName(a.getSourceName());
+                hn.setPublishedAt(effectiveTime(a));
+                hn.setDepth(1);
+                hn.setParentNodeId(sourceNode.getId());
+                hn.setIsSource(0);
+                propagationNodeMapper.insert(hn);
+                allNodes.add(hn);
+            }
+        }
+
+        BigDecimal durationHours = calcDuration(mainCluster);
+        BigDecimal spreadSpeed = BigDecimal.valueOf(mainCluster.size())
                 .divide(durationHours.compareTo(BigDecimal.ZERO) > 0 ? durationHours : BigDecimal.ONE,
-                        2, RoundingMode.HALF_UP);
+                        4, RoundingMode.HALF_UP);
         String pathJson = buildPathJson(allNodes);
 
         int spreadDepth;
         if (pythonResult != null) {
             spreadDepth = toInt(pythonResult.get("spread_depth"));
-            durationHours = (BigDecimal) pythonResult.get("duration_hours");
-            spreadSpeed = (BigDecimal) pythonResult.get("spread_speed");
+            // durationHours 和 spreadSpeed 以 Java mainCluster 为准，不被 Python 覆盖
         } else {
             spreadDepth = allNodes.stream().mapToInt(PropagationNode::getDepth).max().orElse(0);
         }
@@ -178,38 +203,58 @@ public class PropagationServiceImpl implements PropagationService {
         propagationPathMapper.updateById(path);
 
         // ── 组装 VO ──
-        List<PropagationNodeVO> nodeVOs;
+        Set<Long> clusterIds = mainCluster.stream().map(ArticleClean::getId).collect(Collectors.toSet());
+        List<PropagationNodeVO> nodeVOs = new ArrayList<>();
         List<Map<String, Object>> edges = List.of();
         String method = "fallback";
 
         if (pythonResult != null) {
             method = "llm";
             List<Map<String, Object>> pyNodes = (List<Map<String, Object>>) pythonResult.getOrDefault("nodes", List.of());
-            nodeVOs = pyNodes.stream().map(pn -> new PropagationNodeVO(
-                    null,
-                    (long) toInt(pn.get("cleanId")),
-                    (String) pn.getOrDefault("articleTitle", ""),
-                    (String) pn.getOrDefault("sourceName", ""),
-                    (String) pn.getOrDefault("publishedAt", ""),
-                    toInt(pn.get("depth")),
-                    sourceNode.getId(),
-                    Boolean.TRUE.equals(pn.get("isSource")),
-                    Boolean.TRUE.equals(pn.get("isInfluencer")),
-                    (String) pn.getOrDefault("nodeType", "commercial"),
-                    null
-            )).toList();
+            for (Map<String, Object> pn : pyNodes) {
+                long cid = toInt(pn.get("cleanId"));
+                nodeVOs.add(new PropagationNodeVO(
+                        null, cid,
+                        (String) pn.getOrDefault("articleTitle", ""),
+                        (String) pn.getOrDefault("sourceName", ""),
+                        (String) pn.getOrDefault("publishedAt", ""),
+                        toInt(pn.get("depth")),
+                        sourceNode.getId(),
+                        Boolean.TRUE.equals(pn.get("isSource")),
+                        Boolean.TRUE.equals(pn.get("isInfluencer")),
+                        (String) pn.getOrDefault("nodeType", "commercial"),
+                        !clusterIds.contains(cid),  // isHistorical
+                        null
+                ));
+            }
             edges = (List<Map<String, Object>>) pythonResult.getOrDefault("edges", List.of());
         } else {
             method = "fallback";
-            nodeVOs = allNodes.stream().map(n -> new PropagationNodeVO(
-                    n.getId(), n.getCleanId(),
-                    findTitleById(articles, n.getCleanId()),
-                    n.getSourceName(), n.getPublishedAt(),
-                    n.getDepth(), n.getParentNodeId(),
-                    n.getIsSource() != null && n.getIsSource() == 1,
-                    false, "commercial",
-                    n.getCreateTime()
-            )).toList();
+            for (PropagationNode n : allNodes) {
+                nodeVOs.add(new PropagationNodeVO(
+                        n.getId(), n.getCleanId(),
+                        findTitleById(articles, n.getCleanId()),
+                        n.getSourceName(), n.getPublishedAt(),
+                        n.getDepth(), n.getParentNodeId(),
+                        n.getIsSource() != null && n.getIsSource() == 1,
+                        false, "commercial",
+                        !clusterIds.contains(n.getCleanId()),
+                        n.getCreateTime()
+                ));
+            }
+        }
+
+        // 追加历史文章到 VO（这些不在 Python 输出中，因为只传了主力集群给 Python）
+        for (ArticleClean a : sortedArticles) {
+            if (!clusterIds.contains(a.getId())) {
+                nodeVOs.add(new PropagationNodeVO(
+                        null, a.getId(),
+                        a.getTitle(), a.getSourceName(), effectiveTime(a),
+                        1, sourceNode.getId(),
+                        false, false, "commercial",
+                        true, null
+                ));
+            }
         }
 
         return new PropagationPathVO(
@@ -250,6 +295,7 @@ public class PropagationServiceImpl implements PropagationService {
                 n.getDepth(), n.getParentNodeId(),
                 n.getIsSource() != null && n.getIsSource() == 1,
                 false, "commercial",
+                false,   // isHistorical not tracked for historical paths
                 n.getCreateTime()
         )).toList();
 
@@ -282,7 +328,7 @@ public class PropagationServiceImpl implements PropagationService {
             throw new PropagationAnalysisException("事件不存在: " + eventId);
         }
 
-        // 找最早的关联文章
+        // 找最早的关联文章（过滤时间离群点后）
         LambdaQueryWrapper<EventArticle> relWrapper = new LambdaQueryWrapper<>();
         relWrapper.eq(EventArticle::getEventId, eventId);
         List<EventArticle> relations = eventArticleMapper.selectList(relWrapper);
@@ -387,6 +433,43 @@ public class PropagationServiceImpl implements PropagationService {
     }
 
     // ── 工具方法 ────────────────────────────────────────────────
+
+    /**
+     * 从最新文章向前扫描，>90天间隙处断开，返回最近的连贯集群。
+     * 历史文章保留在全量数据中（传给 Python 构图），但指标只基于此集群计算。
+     */
+    private List<ArticleClean> extractMainCluster(List<ArticleClean> sortedArticles) {
+        if (sortedArticles.size() <= 1) return sortedArticles;
+
+        // 从最新文章向前扫描
+        List<ArticleClean> cluster = new ArrayList<>();
+        LocalDateTime prevTime = null;
+
+        for (int i = sortedArticles.size() - 1; i >= 0; i--) {
+            ArticleClean a = sortedArticles.get(i);
+            LocalDateTime t = parseTime(effectiveTime(a));
+            if (t == null) {
+                cluster.add(a);
+                continue;
+            }
+
+            if (prevTime == null) {
+                cluster.add(a);
+                prevTime = t;
+                continue;
+            }
+
+            long gapDays = Math.abs(Duration.between(prevTime, t).toDays());
+            if (gapDays > 90) break; // 间隙过大，前面的归为历史文章
+
+            cluster.add(a);
+            prevTime = t;
+        }
+
+        // cluster 是逆序的，翻转回时间升序
+        Collections.reverse(cluster);
+        return cluster;
+    }
 
     private String effectiveTime(ArticleClean article) {
         if (article.getPublishedAt() != null && !article.getPublishedAt().isBlank()) {

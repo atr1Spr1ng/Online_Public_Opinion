@@ -34,6 +34,9 @@ class ClusteringService:
         return self._llm_client
 
     def cluster(self, articles: list[ArticleItem], threshold: float = 0.25) -> ClusterResponse:
+        total_input = len(articles)
+        logger.info("=" * 60)
+        logger.info("Clustering START: %d articles, threshold=%.2f", total_input, threshold)
         if not articles:
             return ClusterResponse(events=[], total_articles=0, clustered_articles=0, unclustered_articles=0)
 
@@ -44,43 +47,71 @@ class ClusteringService:
             keyword_sets[a.id] = set(k.strip() for k in kw.split(",") if k.strip())
 
         # 1. 稠密向量 + HDBSCAN 聚类（主力）
-        clusters, noise_count = self._cluster_by_hdbscan(articles)
+        clusters, hdbscan_noise = self._cluster_by_hdbscan(articles)
         if clusters is not None:
-            logger.info("Clustering: HDBSCAN grouped %d articles into %d clusters", len(articles), len(clusters))
+            cluster_articles = sum(len(c["articles"]) for c in clusters)
+            non_noise_clusters = [c for c in clusters if not c.get("_noise")]
+            logger.info("[Step 1] HDBSCAN: %d clusters (non-noise: %d), %d articles in clusters, %d noise",
+                        len(clusters), len(non_noise_clusters), cluster_articles, hdbscan_noise)
         else:
             # 2. HDBSCAN 不可用，降级为 SinglePass + Jaccard
-            clusters, noise_count = self._cluster_by_jaccard(articles, keyword_sets, threshold)
-            logger.info("Clustering: Jaccard fallback grouped %d articles into %d clusters", len(articles), len(clusters))
+            clusters, hdbscan_noise = self._cluster_by_jaccard(articles, keyword_sets, threshold)
+            logger.info("[Step 1] Jaccard fallback: %d clusters, %d noise (no-keyword)", len(clusters), hdbscan_noise)
+
+        noise_count = hdbscan_noise
 
         # 后处理：簇内一致性剪枝，剔除与簇中心余弦距离过远的离群文章
+        before_prune_articles = sum(len(c["articles"]) for c in clusters)
         clusters, pruned_count = self._prune_cluster_outliers(clusters)
+        after_prune_articles = sum(len(c["articles"]) for c in clusters)
         if pruned_count > 0:
             noise_count += pruned_count
-            logger.info("Clustering: pruned %d outlier articles from clusters", pruned_count)
+            logger.info("[Step 2] Prune: removed %d outliers (%d → %d articles in clusters)",
+                        pruned_count, before_prune_articles, after_prune_articles)
+        else:
+            logger.info("[Step 2] Prune: 0 articles removed")
 
         # 后处理：合并语义高度相似的簇（簇中心余弦相似度 ≥ 0.92），防 HDBSCAN 把同一事件拆散
         merged_count = len(clusters)
         clusters = self._merge_similar_clusters(clusters, threshold=0.92)
         merged_count = merged_count - len(clusters)
         if merged_count > 0:
-            logger.info("Clustering: merged %d similar clusters, now %d total", merged_count, len(clusters))
+            logger.info("[Step 3] Merge: merged %d similar clusters, now %d total", merged_count, len(clusters))
+        else:
+            logger.info("[Step 3] Merge: 0 clusters merged")
 
         # 排除噪声簇（HDBSCAN 标记的 _noise），这些文章已在 noise_count 中
         valid_clusters = [c for c in clusters if len(c["ids"]) >= 2 and not c.get("_noise")]
-        # noise_count 已包含 HDBSCAN/Jaccard 返回的噪声数，这里只补充单篇非噪声簇
+        single_dropped = 0
         for c in clusters:
             if len(c["ids"]) < 2 and not c.get("_noise"):
                 noise_count += len(c["ids"])
+                single_dropped += len(c["ids"])
+        if single_dropped > 0:
+            logger.info("[Step 4] Single-drop: %d articles in single-article clusters discarded", single_dropped)
 
         events: list[EventCluster] = []
         now = datetime.now()
 
+        # Parallel LLM event naming (or fallback frequency-based naming)
+        def _name_cluster(idx: int, cluster: dict) -> tuple[int, str, list[str]]:
+            arts = cluster["articles"]
+            title, top_keywords = self._generate_event_name(arts, keyword_sets)
+            return (idx, title, top_keywords)
+
+        names_by_idx: dict[int, tuple[str, list[str]]] = {}
+        if valid_clusters:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {pool.submit(_name_cluster, i, c): i for i, c in enumerate(valid_clusters)}
+                for future in as_completed(futures):
+                    idx, title, top_keywords = future.result()
+                    names_by_idx[idx] = (title, top_keywords)
+
         for i, cluster in enumerate(valid_clusters):
             event_id = i + 1
+            title, top_keywords = names_by_idx[i]
             arts = cluster["articles"]
-
-            # LLM 生成标题和关键词，失败时降级为词频
-            title, top_keywords = self._generate_event_name(arts, keyword_sets)
 
             article_count = len(arts)
             hotness = self._calc_hotness(arts, now)
@@ -243,7 +274,7 @@ class ClusteringService:
                 pruned_clusters.append(c)
                 continue
 
-            vectors = c.pop("_vectors", None)
+            vectors = c.get("_vectors")
             if vectors is None or vectors.shape[0] < 2:
                 pruned_clusters.append(c)
                 continue
@@ -321,33 +352,23 @@ class ClusteringService:
     def _merge_similar_clusters(self, clusters: list[dict], threshold: float = 0.85) -> list[dict]:
         """后处理：基于簇中心向量的余弦相似度合并语义高度相似的簇。
 
-        与 HDBSCAN 使用同一语义空间（BGE 向量），替代原来的关键词 Jaccard 方案，
-        消除"关键词偶然重叠导致传递链合并"的问题。
-
-        阈值 threshold 为余弦相似度，默认 0.85（即向量夹角 < 31.8°），
-        只合并语义几乎相同的簇。
+        复用 HDBSCAN 步骤已编码的 per-article 向量，避免重复编码。
         """
         if len(clusters) <= 1:
             return clusters
 
-        embed_service = EmbeddingService()
-        if not embed_service.available:
-            logger.warning("EmbeddingService unavailable, skip merge")
-            return clusters
-
-        # 为每个簇计算中心向量（簇内所有文章向量的均值）
+        # 直接用簇内已存储的 _vectors 计算中心向量，无需重新编码
         centroids: list[np.ndarray | None] = []
         for c in clusters:
-            texts = []
-            for a in c["articles"]:
-                title = a.title or ""
-                summary = a.summary or ""
-                texts.append(f"{title} {summary}"[:512])
-            if not texts:
+            vectors = c.get("_vectors")
+            if vectors is not None and vectors.shape[0] > 0:
+                centroid = np.mean(vectors, axis=0)
+                centroid_norm = np.linalg.norm(centroid)
+                if centroid_norm > 0:
+                    centroid = centroid / centroid_norm
+                centroids.append(centroid)
+            else:
                 centroids.append(None)
-                continue
-            vecs = embed_service.encode(texts)
-            centroids.append(np.mean(vecs, axis=0))
 
         n = len(clusters)
         parent = list(range(n))

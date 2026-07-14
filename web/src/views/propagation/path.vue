@@ -12,7 +12,7 @@
           <el-col :span="6"><el-statistic title="传播深度" :value="result.spreadDepth || 0" /></el-col>
           <el-col :span="6"><el-statistic title="节点总数" :value="result.totalNodes || 0" /></el-col>
           <el-col :span="6"><el-statistic title="持续时间(h)" :value="result.durationHours || 0" /></el-col>
-          <el-col :span="6"><el-statistic title="传播速度" :value="result.spreadSpeed || 0" suffix="篇/h" /></el-col>
+          <el-col :span="6"><el-statistic title="传播速度" :value="((result.spreadSpeed || 0) * 24).toFixed(4)" suffix="篇/天" /></el-col>
         </el-row>
         <div style="margin-top:4px;display:flex;gap:12px;align-items:center;font-size:13px;color:#606266">
           <span>分析方法：<el-tag size="small" :type="result.method === 'llm' ? 'success' : 'warning'">{{ result.method === 'llm' ? 'AI 分析' : '规则降级' }}</el-tag></span>
@@ -23,6 +23,7 @@
           <span><span style="display:inline-block;width:12px;height:12px;background:#67C23A;border-radius:2px;margin-right:4px;vertical-align:middle"></span>社交媒体</span>
           <span><span style="display:inline-block;width:12px;height:12px;background:#409EFF;border-radius:2px;margin-right:4px;vertical-align:middle"></span>商业媒体</span>
           <span style="margin-left:8px">⬟ 关键传播节点</span>
+          <span style="margin-left:8px"><span style="display:inline-block;width:12px;height:12px;background:#c0c4cc;border:1px dashed #909399;border-radius:50%;margin-right:4px;vertical-align:middle"></span>历史文章</span>
         </div>
         <div ref="graphRef" style="width:100%;height:450px"></div>
       </template>
@@ -51,7 +52,7 @@ async function handleAnalyze() {
     ElMessage.success('分析完成')
     await nextTick()
     renderGraph()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { analyzing.value = false }
 }
 
@@ -72,11 +73,14 @@ function renderGraph() {
   const nodes = result.value.nodes.map(n => ({
     id: n.cleanId,
     name: n.articleTitle || `文章#${n.cleanId}`,
-    symbolSize: n.isSource ? 44 : n.isInfluencer ? 36 : Math.max(18, 32 - (n.depth || 0) * 3),
+    symbolSize: n.isHistorical ? 20 : n.isSource ? 44 : n.isInfluencer ? 36 : Math.max(18, 32 - (n.depth || 0) * 3),
     symbol: n.isInfluencer ? 'diamond' : 'circle',
-    itemStyle: { color: nodeColor(n), borderColor: n.isInfluencer ? '#333' : 'transparent', borderWidth: n.isInfluencer ? 2 : 0 },
+    itemStyle: n.isHistorical
+      ? { color: '#c0c4cc', borderColor: '#909399', borderWidth: 1, borderType: 'dashed', opacity: 0.7 }
+      : { color: nodeColor(n), borderColor: n.isInfluencer ? '#333' : 'transparent', borderWidth: n.isInfluencer ? 2 : 0 },
     label: { show: true, fontSize: n.isSource ? 12 : 10, formatter: p => {
       const label = p.name.length > 10 ? p.name.slice(0, 10) + '...' : p.name
+      if (n.isHistorical) return label + '\n历史'
       if (n.isSource) return label + '\n源头'
       if (n.isInfluencer) return label + '\n★关键'
       return label
@@ -105,7 +109,7 @@ function renderGraph() {
       formatter: p => {
         if (p.dataType === 'node') {
           const n = result.value.nodes.find(x => x.cleanId == p.id) || {}
-          const tags = [n.isSource && '源头', n.isInfluencer && '关键节点', typeName[n.nodeType]].filter(Boolean).join(' | ')
+          const tags = [n.isSource && '源头', n.isInfluencer && '★关键', n.isHistorical && '历史', typeName[n.nodeType]].filter(Boolean).join(' | ')
           return `${p.name}<br/>来源: ${n.sourceName || '未知'}<br/>${tags}`
         }
         return ''

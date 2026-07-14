@@ -1,6 +1,8 @@
 package com.bupt.publicopinion.collection.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -28,6 +30,7 @@ public class ArticleRaw {
     private String language;
     private LocalDateTime fetchedAt;
     private LocalDateTime createTime;
+    @TableField(fill = FieldFill.UPDATE)
     private LocalDateTime updateTime;
 
     public Long getId() {

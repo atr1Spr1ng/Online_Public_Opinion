@@ -21,13 +21,13 @@ public class TopicSearchRequest {
     public TopicSearchRequest(String keyword, List<Long> sourceIds, int limit) {
         this.keyword = keyword;
         this.sourceIds = sourceIds;
-        this.limit = limit > 0 && limit <= 100 ? limit : 10;
+        this.limit = limit > 0 && limit <= 500 ? limit : 10;
     }
 
     public String getKeyword() { return keyword; }
     public void setKeyword(String keyword) { this.keyword = keyword; }
     public List<Long> getSourceIds() { return sourceIds; }
     public void setSourceIds(List<Long> sourceIds) { this.sourceIds = sourceIds; }
-    public int getLimit() { return limit > 0 && limit <= 100 ? limit : 10; }
+    public int getLimit() { return limit > 0 && limit <= 500 ? limit : 10; }
     public void setLimit(int limit) { this.limit = limit; }
 }

@@ -112,9 +112,7 @@ async function handleSubmit() {
       ElMessage.success('注册成功，请登录')
       switchMode('login')
     }
-  } catch (e) {
-    ElMessage.error(e.message || '操作失败')
-  } finally {
+  } catch {} finally {
     loading.value = false
   }
 }

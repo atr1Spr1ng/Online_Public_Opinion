@@ -149,7 +149,6 @@ async function toggleStatus(row) {
     ElMessage.success(row.status === 1 ? '已启用' : '已禁用')
   } catch (e) {
     row.status = row.status === 1 ? 0 : 1
-    ElMessage.error(e.message)
   }
 }
 
@@ -157,8 +156,7 @@ async function changeRole(row) {
   try {
     await updateUser(row.id, { role: row.role })
     ElMessage.success('角色已更新')
-  } catch (e) {
-    ElMessage.error(e.message)
+  } catch {
     fetchUsers()
   }
 }
@@ -177,7 +175,7 @@ async function submitCreate() {
     ElMessage.success('用户已创建')
     createDialog.visible = false
     fetchUsers()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 function openResetPwd(row) {
@@ -192,7 +190,7 @@ async function submitResetPwd() {
     await resetPassword(pwdDialog.userId, pwdDialog.password)
     ElMessage.success('密码已重置')
     pwdDialog.visible = false
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function handleDelete(row) {
@@ -200,7 +198,7 @@ async function handleDelete(row) {
     await deleteUser(row.id)
     ElMessage.success('已删除')
     fetchUsers()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 onMounted(fetchUsers)

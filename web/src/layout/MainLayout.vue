@@ -62,7 +62,7 @@
         </el-menu-item>
         <el-menu-item index="/search">
           <el-icon><Search /></el-icon>
-          <span>文章搜索</span>
+          <span>事件检索</span>
         </el-menu-item>
         <el-sub-menu index="user">
           <template #title>

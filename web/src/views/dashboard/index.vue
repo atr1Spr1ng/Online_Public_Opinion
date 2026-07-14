@@ -1,10 +1,9 @@
 <template>
   <div>
     <el-row :gutter="20" class="stats-row">
-      <el-col :span="6"><el-card><div class="stat-item"><div class="stat-num">{{ stats.articles }}</div><div class="stat-label">原始文章</div></div></el-card></el-col>
-      <el-col :span="6"><el-card><div class="stat-item"><div class="stat-num">{{ stats.cleaned }}</div><div class="stat-label">已清洗</div></div></el-card></el-col>
-      <el-col :span="6"><el-card><div class="stat-item"><div class="stat-num">{{ stats.events }}</div><div class="stat-label">舆情事件</div></div></el-card></el-col>
-      <el-col :span="6"><el-card><div class="stat-item"><div class="stat-num">{{ stats.reports }}</div><div class="stat-label">分析报告</div></div></el-card></el-col>
+      <el-col :span="8"><el-card><div class="stat-item"><div class="stat-num">{{ stats.articles }}</div><div class="stat-label">原始文章</div></div></el-card></el-col>
+      <el-col :span="8"><el-card><div class="stat-item"><div class="stat-num">{{ stats.cleaned }}</div><div class="stat-label">已清洗</div></div></el-card></el-col>
+      <el-col :span="8"><el-card><div class="stat-item"><div class="stat-num">{{ stats.events }}</div><div class="stat-label">舆情事件</div></div></el-card></el-col>
     </el-row>
 
     <el-row :gutter="20" style="margin-top:20px">
@@ -85,11 +84,10 @@ import * as echarts from 'echarts'
 import { getArticles } from '@/api/crawler'
 import { getCleanArticles } from '@/api/content'
 import { getSentimentResults } from '@/api/analysis'
-import { getReports } from '@/api/report'
 import { listEvents, getMyFeedEvents } from '@/api/event'
 import { listKeywords, listDomains } from '@/api/user'
 
-const stats = reactive({ articles: 0, cleaned: 0, events: 0, reports: 0 })
+const stats = reactive({ articles: 0, cleaned: 0, events: 0 })
 const sentimentData = ref([])
 const chartRef = ref(null)
 const hotEvents = ref([])
@@ -113,13 +111,12 @@ function categoryType(cat) {
 }
 
 onMounted(async () => {
-  try { const res = await getArticles({ pageNum: 1, pageSize: 1 }); stats.articles = res.total || 0 } catch (_) {}
-  try { const res = await getCleanArticles({ pageNum: 1, pageSize: 1 }); stats.cleaned = res.total || 0 } catch (_) {}
+  try { const res = await getArticles({ pageNum: 1, pageSize: 1, excludeCleaned: false }); stats.articles = res.data?.total || res.total || 0 } catch (_) {}
+  try { const res = await getCleanArticles({ pageNum: 1, pageSize: 1 }); stats.cleaned = res.data?.total || res.total || 0 } catch (_) {}
   try { const res = await listEvents({ pageNum: 1, pageSize: 1 }); stats.events = res.data?.total || res.total || 0 } catch (_) {}
-  try { const res = await getReports({ pageNum: 1, pageSize: 1 }); stats.reports = res.total || 0 } catch (_) {}
 
   try {
-    const res = await getSentimentResults({ pageNum: 1, pageSize: 100 })
+    const res = await getSentimentResults({ pageNum: 1, pageSize: 10000 })
     const data = res.data?.records || res.data || []
     const pos = data.filter(i => i.sentiment === 'POSITIVE').length
     const neg = data.filter(i => i.sentiment === 'NEGATIVE').length

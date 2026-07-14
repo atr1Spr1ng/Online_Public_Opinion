@@ -22,9 +22,9 @@ SOURCE_PROFILES: tuple[SourceProfile, ...] = (
     SourceProfile(
         name="新浪新闻",
         source_type="portal",
-        domains=("news.sina.com.cn",),
+        domains=("sina.com.cn", "sina.cn"),
         patterns=(
-            re.compile(r"^https?://news\.sina\.com\.cn/[a-z]/\d{4}-\d{2}-\d{2}/doc-[^/?#]+\.shtml$"),
+            re.compile(r"^https?://[\w.-]*sina\.com\.cn/.*\d{4}-\d{2}-\d{2}/doc-[^/?#]+\.shtml$"),
         ),
     ),
     SourceProfile(
@@ -32,7 +32,7 @@ SOURCE_PROFILES: tuple[SourceProfile, ...] = (
         source_type="official",
         domains=("www.chinanews.com.cn", "chinanews.com.cn"),
         patterns=(
-            re.compile(r"^https?://(?:www\.)?chinanews\.com\.cn/[\w-]+/\d{4}/\d{2}-\d{2}/\d+\.shtml$"),
+            re.compile(r"^https?://(?:www\.)?chinanews\.com\.cn/(?!shipin/).*\d{4}/\d{2}-\d{2}/.*\.shtml$"),
         ),
     ),
     SourceProfile(
@@ -40,7 +40,7 @@ SOURCE_PROFILES: tuple[SourceProfile, ...] = (
         source_type="original",
         domains=("www.thepaper.cn", "thepaper.cn"),
         patterns=(
-            re.compile(r"^https?://(?:www\.)?thepaper\.cn/newsDetail_forward_\d+$"),
+            re.compile(r"^https?://(?:www\.)?thepaper\.cn/newsDetail(_forward)?_\d+$"),
         ),
     ),
     SourceProfile(
@@ -49,14 +49,6 @@ SOURCE_PROFILES: tuple[SourceProfile, ...] = (
         domains=("www.jiemian.com", "jiemian.com"),
         patterns=(
             re.compile(r"^https?://(?:www\.)?jiemian\.com/article/\d+\.html$"),
-        ),
-    ),
-    SourceProfile(
-        name="人民网",
-        source_type="official",
-        domains=("www.people.com.cn", "people.com.cn"),
-        patterns=(
-            re.compile(r"^https?://[\w.-]*people\.com\.cn/n1/\d{4}/\d{4}/c\d+-\d+\.html$"),
         ),
     ),
 )
@@ -93,6 +85,16 @@ class NewsLinkDiscoverer:
 
         profile = self._match_profile(final_url)
         links = self._extract_links(html, final_url, profile, limit)
+
+        # JS rendering fallback: if static HTML yields too few links
+        if len(links) < limit:
+            try:
+                js_html = self._render_with_browser(final_url)
+                if js_html and js_html != html:
+                    links = self._extract_links(js_html, final_url, profile, limit)
+            except Exception:
+                pass
+
         return NewsDiscoverResult(
             source_url=url,
             final_url=final_url,
@@ -137,7 +139,7 @@ class NewsLinkDiscoverer:
         host = urlparse(url).netloc.lower().removeprefix("www.")
         for profile in SOURCE_PROFILES:
             clean_domains = tuple(d.removeprefix("www.") for d in profile.domains)
-            if host in clean_domains:
+            if any(host == d or host.endswith("." + d) for d in clean_domains):
                 return profile
         return None
 
@@ -145,7 +147,7 @@ class NewsLinkDiscoverer:
     def _is_news_detail_url(url: str, profile: SourceProfile | None) -> bool:
         if profile:
             return any(pattern.match(url) for pattern in profile.patterns)
-        return url.endswith((".shtml", ".html")) and "/article/" in url
+        return url.endswith((".shtml", ".html")) or "/article/" in url
 
     @staticmethod
     def _normalize_url(url: str) -> str:
@@ -160,6 +162,46 @@ class NewsLinkDiscoverer:
                 "",
             )
         )
+
+    def _render_with_browser(self, url: str) -> str:
+        import subprocess
+        import sys
+
+        script = r"""
+import sys, json
+from playwright.sync_api import sync_playwright
+url = sys.argv[1]
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    page = browser.new_page()
+    try:
+        page.goto(url, wait_until='networkidle', timeout=30000)
+        html = page.content()
+    finally:
+        browser.close()
+try:
+    print(json.dumps({"ok": True, "html": html}))
+except Exception as e:
+    print(json.dumps({"ok": False, "error": str(e)}))
+"""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script, url],
+                capture_output=True,
+                text=True,
+                timeout=45,
+            )
+        except subprocess.TimeoutExpired:
+            raise CrawlerException("Playwright 渲染超时")
+
+        if result.returncode != 0:
+            raise CrawlerException(f"Playwright 渲染失败: {result.stderr.strip() or '未知错误'}")
+
+        import json
+        data = json.loads(result.stdout.strip())
+        if not data.get("ok"):
+            raise CrawlerException(f"Playwright 渲染失败: {data.get('error', '未知错误')}")
+        return data["html"]
 
     def _read_html(self, response: httpx.Response) -> str:
         content_type = response.headers.get("content-type", "").lower()

@@ -1,6 +1,8 @@
 package com.bupt.publicopinion.analysis.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -20,7 +22,13 @@ public class ArticleSentiment {
     private BigDecimal confidence;
     private String detailsJson;
     private LocalDateTime createTime;
+    @TableField(fill = FieldFill.UPDATE)
     private LocalDateTime updateTime;
+
+    @TableField(exist = false)
+    private String title;
+    @TableField(exist = false)
+    private String originalUrl;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -51,4 +59,10 @@ public class ArticleSentiment {
 
     public LocalDateTime getUpdateTime() { return updateTime; }
     public void setUpdateTime(LocalDateTime updateTime) { this.updateTime = updateTime; }
+
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+
+    public String getOriginalUrl() { return originalUrl; }
+    public void setOriginalUrl(String originalUrl) { this.originalUrl = originalUrl; }
 }

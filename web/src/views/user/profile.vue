@@ -65,9 +65,7 @@ onMounted(async () => {
   try {
     const res = await getProfile()
     Object.assign(form.value, res.data)
-  } catch {
-    ElMessage.error('获取个人信息失败')
-  }
+  } catch {}
 })
 
 async function handleSubmit() {
@@ -79,9 +77,7 @@ async function handleSubmit() {
     await updateProfile({ nickname: form.value.nickname, email: form.value.email })
     ElMessage.success('个人信息已更新')
     await userStore.fetchUserInfo()
-  } catch {
-    ElMessage.error('更新失败')
-  } finally {
+  } catch {} finally {
     loading.value = false
   }
 }

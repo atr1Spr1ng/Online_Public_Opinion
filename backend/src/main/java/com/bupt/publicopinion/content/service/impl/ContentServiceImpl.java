@@ -2,6 +2,8 @@ package com.bupt.publicopinion.content.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.bupt.publicopinion.analysis.entity.ArticleSentiment;
+import com.bupt.publicopinion.analysis.mapper.ArticleSentimentMapper;
 import com.bupt.publicopinion.collection.entity.ArticleRaw;
 import com.bupt.publicopinion.collection.mapper.ArticleRawMapper;
 import com.bupt.publicopinion.content.client.PythonContentClient;
@@ -13,28 +15,38 @@ import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.service.ContentService;
 import com.bupt.publicopinion.content.vo.CleanResult;
+import com.bupt.publicopinion.fake.entity.ArticleFakeDetection;
+import com.bupt.publicopinion.fake.mapper.ArticleFakeDetectionMapper;
 import com.bupt.publicopinion.search.service.SearchSyncService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
 
 @Service
 public class ContentServiceImpl implements ContentService {
 
     private final ArticleCleanMapper articleCleanMapper;
     private final ArticleRawMapper articleRawMapper;
+    private final ArticleSentimentMapper articleSentimentMapper;
+    private final ArticleFakeDetectionMapper articleFakeDetectionMapper;
     private final PythonContentClient pythonContentClient;
     private final SearchSyncService searchSyncService;
 
     public ContentServiceImpl(
             ArticleCleanMapper articleCleanMapper,
             ArticleRawMapper articleRawMapper,
+            ArticleSentimentMapper articleSentimentMapper,
+            ArticleFakeDetectionMapper articleFakeDetectionMapper,
             PythonContentClient pythonContentClient,
             SearchSyncService searchSyncService
     ) {
         this.articleCleanMapper = articleCleanMapper;
         this.articleRawMapper = articleRawMapper;
+        this.articleSentimentMapper = articleSentimentMapper;
+        this.articleFakeDetectionMapper = articleFakeDetectionMapper;
         this.pythonContentClient = pythonContentClient;
         this.searchSyncService = searchSyncService;
     }
@@ -54,13 +66,31 @@ public class ContentServiceImpl implements ContentService {
     @Override
     public List<CleanResult> batchClean(List<Long> rawIds) {
         List<CleanResult> results = new ArrayList<>();
+        final UserContext.UserContextInfo ctx = UserContext.get();
+        Semaphore sem = new Semaphore(5);
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
         for (Long rawId : rawIds) {
-            try {
-                results.add(cleanArticle(new CleanRequest(rawId)));
-            } catch (Exception e) {
-                results.add(CleanResult.failed(rawId, e.getMessage()));
-            }
+            futures.add(CompletableFuture.runAsync(() -> {
+                UserContext.set(ctx);
+                try {
+                    sem.acquire();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                try {
+                    CleanResult r = cleanArticle(new CleanRequest(rawId));
+                    synchronized (results) { results.add(r); }
+                } catch (Exception e) {
+                    synchronized (results) { results.add(CleanResult.failed(rawId, e.getMessage())); }
+                } finally {
+                    sem.release();
+                    UserContext.clear();
+                }
+            }));
         }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         return results;
     }
 
@@ -84,8 +114,8 @@ public class ContentServiceImpl implements ContentService {
         if (excludeDetected) {
             wrapper.notInSql(ArticleClean::getId, "SELECT clean_id FROM article_fake_detection");
         }
-        if (!"ADMIN".equals(UserContext.get().role())) {
-            wrapper.eq(ArticleClean::getUserId, UserContext.get().userId());
+        if (!"ADMIN".equals(UserContext.getRequired().role())) {
+            wrapper.eq(ArticleClean::getUserId, UserContext.getRequired().userId());
         }
 
         Page<ArticleClean> page = new Page<>(pageNum, pageSize);
@@ -115,7 +145,7 @@ public class ContentServiceImpl implements ContentService {
         }
 
         clean.setSimhash(isDuplicate ? -1L : 0L);
-        clean.setUserId(UserContext.get().userId());
+        clean.setUserId(UserContext.getRequired().userId());
         articleCleanMapper.insert(clean);
     }
 
@@ -125,6 +155,11 @@ public class ContentServiceImpl implements ContentService {
         if (article == null) {
             throw new RuntimeException("清洗文章不存在: " + id);
         }
+        // 级联删除情感分析和虚假检测结果
+        articleSentimentMapper.delete(
+                new LambdaQueryWrapper<ArticleSentiment>().eq(ArticleSentiment::getCleanId, id));
+        articleFakeDetectionMapper.delete(
+                new LambdaQueryWrapper<ArticleFakeDetection>().eq(ArticleFakeDetection::getCleanId, id));
         articleCleanMapper.deleteById(id);
     }
 }

@@ -57,6 +57,7 @@
         <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="cleanId" label="文章ID" width="80" />
+        <el-table-column prop="title" label="文章标题" show-overflow-tooltip min-width="200" />
         <el-table-column prop="sentiment" label="情感" width="100">
           <template #default="{ row }">
             <el-tag :type="sentimentType(row.sentiment)">{{ sentimentLabel(row.sentiment) }}</el-tag>
@@ -66,8 +67,9 @@
         <el-table-column prop="negativeScore" label="负面分数" width="90" />
         <el-table-column prop="confidence" label="置信度" width="90" />
         <el-table-column prop="createTime" label="时间" width="170" />
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="160">
           <template #default="{ row }">
+            <el-button v-if="row.originalUrl" type="primary" link @click="openUrl(row.originalUrl)">查看原文</el-button>
             <el-popconfirm title="确定删除该分析结果？" @confirm="handleDeleteResult(row)">
               <template #reference>
                 <el-button type="danger" link>删除</el-button>
@@ -105,7 +107,7 @@ async function fetchCleanArticles() {
     const res = await getCleanArticles({ pageNum: cleanPage.pageNum, pageSize: cleanPage.pageSize, excludeAnalyzed: true })
     cleanArticles.value = res.data?.records || res.data || []
     cleanTotal.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { cleanLoading.value = false }
 }
 
@@ -118,6 +120,9 @@ const selectedResultRows = ref([])
 
 function sentimentType(s) { return s === 'POSITIVE' ? 'success' : s === 'NEGATIVE' ? 'danger' : 'info' }
 function sentimentLabel(s) { return s === 'POSITIVE' ? '正面' : s === 'NEGATIVE' ? '负面' : '中立' }
+function openUrl(url) {
+  window.open(url, '_blank')
+}
 
 async function fetchResults() {
   resultLoading.value = true
@@ -125,7 +130,7 @@ async function fetchResults() {
     const res = await getSentimentResults({ pageNum: resultPage.pageNum, pageSize: resultPage.pageSize })
     resultData.value = res.data?.records || res.data || []
     resultTotal.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { resultLoading.value = false }
 }
 
@@ -136,7 +141,7 @@ async function analyzeOne(row) {
     ElMessage.success(`「${row.title || row.id}」分析完成`)
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchAnalyze() {
@@ -146,7 +151,7 @@ async function batchAnalyze() {
     selectedCleanIds.value = []
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchReanalyze() {
@@ -157,7 +162,7 @@ async function batchReanalyze() {
     ElMessage.success(`重新分析 ${ids.length} 篇文章完成`)
     selectedResultRows.value = []
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchDeleteResults() {
@@ -171,7 +176,7 @@ async function batchDeleteResults() {
     selectedResultRows.value = []
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function handleDeleteResult(row) {
@@ -180,7 +185,7 @@ async function handleDeleteResult(row) {
     ElMessage.success('分析结果已删除')
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 onMounted(() => {

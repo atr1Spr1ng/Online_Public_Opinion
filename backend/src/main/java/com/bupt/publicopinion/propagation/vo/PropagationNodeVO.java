@@ -13,6 +13,7 @@ public record PropagationNodeVO(
         Boolean isSource,
         Boolean isInfluencer,
         String nodeType,
+        Boolean isHistorical,
         LocalDateTime createTime
 ) {
 }

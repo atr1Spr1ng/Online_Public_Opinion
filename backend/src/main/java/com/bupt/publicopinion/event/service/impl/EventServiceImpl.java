@@ -31,9 +31,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,13 +108,15 @@ public class EventServiceImpl implements EventService {
             return errorResult;
         }
 
-        // 3. 清除旧事件（幂等）
-        eventArticleMapper.delete(new LambdaQueryWrapper<>());
-        eventMapper.delete(new LambdaQueryWrapper<>());
-        try {
-            searchSyncService.deleteAllEvents();
-        } catch (Exception e) {
-            System.err.println("[Event] ES 事件索引清除失败（ES 可能未启动）: " + e.getMessage());
+        // 3. 保存旧事件数据，用于 ID 继承匹配
+        List<Event> oldEvents = eventMapper.selectList(new LambdaQueryWrapper<>());
+        Map<Long, Set<Long>> oldEventArticles = new HashMap<>(); // eventId → cleanIds
+        for (Event oe : oldEvents) {
+            List<EventArticle> eas = eventArticleMapper.selectList(
+                    new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, oe.getId())
+            );
+            oldEventArticles.put(oe.getId(),
+                    eas.stream().map(EventArticle::getCleanId).collect(Collectors.toSet()));
         }
 
         // 4. 收集所有有效 cleanId
@@ -119,7 +124,7 @@ public class EventServiceImpl implements EventService {
                 .map(ArticleClean::getId)
                 .collect(Collectors.toSet());
 
-        // 5. 分类（LDA + 关键词词典）
+        // 5. 分类（LLM + 关键词词典）
         Map<Long, String> categoryMap = new HashMap<>();
         if (!result.events().isEmpty()) {
             try {
@@ -147,9 +152,56 @@ public class EventServiceImpl implements EventService {
             }
         }
 
-        // 6. 写入新事件
-        List<EventVO> savedEvents = new ArrayList<>();
+        // 6. 新簇 → 旧事件 ID 匹配（≥50% 旧事件文章在新簇中 → 继承 ID）
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        Map<Integer, Long> inheritedIds = new HashMap<>();  // newClusterIdx → oldEventId
+        Set<Long> matchedOldEventIds = new HashSet<>();
+
+        for (int i = 0; i < result.events().size(); i++) {
+            Set<Long> newArticleIds = new HashSet<>(result.events().get(i).articleIds());
+            Long bestOldId = null;
+            double bestOverlap = 0.0;
+
+            for (var entry : oldEventArticles.entrySet()) {
+                Long oldId = entry.getKey();
+                Set<Long> oldIds = entry.getValue();
+                if (oldIds.isEmpty() || matchedOldEventIds.contains(oldId)) continue;
+
+                long overlap = oldIds.stream().filter(newArticleIds::contains).count();
+                double ratio = (double) overlap / oldIds.size();
+
+                if (ratio >= 0.5 && ratio > bestOverlap) {
+                    bestOverlap = ratio;
+                    bestOldId = oldId;
+                }
+            }
+
+            if (bestOldId != null) {
+                inheritedIds.put(i, bestOldId);
+                matchedOldEventIds.add(bestOldId);
+            }
+        }
+
+        // 7. 清除所有旧 event_article 关联
+        eventArticleMapper.delete(new LambdaQueryWrapper<>());
+
+        // 8. 删除未匹配的旧事件（噪声/不合理事件自动清理）
+        for (Event oe : oldEvents) {
+            if (!matchedOldEventIds.contains(oe.getId())) {
+                eventMapper.deleteById(oe.getId());
+            }
+        }
+
+        // 9. 清除并重建 ES 事件索引
+        try {
+            searchSyncService.deleteAllEvents();
+        } catch (Exception ex) {
+            System.err.println("[Event] ES 事件索引清除失败（ES 可能未启动）: " + ex.getMessage());
+        }
+
+        // 10. 写入事件：已匹配的更新，未匹配的新建
+        List<EventVO> savedEvents = new ArrayList<>();
+        Long userId = UserContext.getRequired().userId();
 
         for (int i = 0; i < result.events().size(); i++) {
             PythonIntelligenceClient.EventClusterItem item = result.events().get(i);
@@ -164,19 +216,27 @@ public class EventServiceImpl implements EventService {
             if (!item.startTime().isEmpty()) {
                 try {
                     event.setStartTime(LocalDateTime.parse(item.startTime(), dtf));
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
             }
             if (!item.endTime().isEmpty()) {
                 try {
                     event.setEndTime(LocalDateTime.parse(item.endTime(), dtf));
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
             }
 
-            event.setUserId(UserContext.get().userId());
-            eventMapper.insert(event);
+            event.setUserId(userId);
 
+            Long inheritedId = inheritedIds.get(i);
+            if (inheritedId != null) {
+                // 更新已有事件，保留 ID
+                event.setId(inheritedId);
+                eventMapper.updateById(event);
+            } else {
+                // 新建事件
+                eventMapper.insert(event);
+            }
+
+            // 写入事件-文章关联
             for (Long cleanId : item.articleIds()) {
                 if (!validCleanIds.contains(cleanId)) continue;
                 EventArticle ea = new EventArticle();
@@ -188,9 +248,18 @@ public class EventServiceImpl implements EventService {
             savedEvents.add(EventVO.from(event));
         }
 
+        // 11. 同步事件到 ES
+        List<Event> allCurrentEvents = eventMapper.selectList(new LambdaQueryWrapper<>());
+        try {
+            searchSyncService.indexEvents(allCurrentEvents);
+        } catch (Exception ex) {
+            System.err.println("[Event] ES 事件索引同步失败: " + ex.getMessage());
+        }
+
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("events", savedEvents);
+        response.put("inheritedCount", inheritedIds.size());
         response.put("totalArticles", result.totalArticles());
         response.put("clusteredArticles", result.clusteredArticles());
         response.put("unclusteredArticles", result.unclusteredArticles());
@@ -203,8 +272,8 @@ public class EventServiceImpl implements EventService {
         LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
                 .eq(category != null && !category.isBlank(), Event::getCategory, category)
                 .orderByDesc(Event::getHotness);
-        if (!"ADMIN".equals(UserContext.get().role())) {
-            wrapper.eq(Event::getUserId, UserContext.get().userId());
+        if (!"ADMIN".equals(UserContext.getRequired().role())) {
+            wrapper.eq(Event::getUserId, UserContext.getRequired().userId());
         }
         Page<Event> result = eventMapper.selectPage(page, wrapper);
 
@@ -309,13 +378,42 @@ public class EventServiceImpl implements EventService {
 
         List<Map<String, Object>> dailyCounts = dailyCounts(eventId);
 
-        Map<String, Object> result = pythonIntelligenceClient.forecastTrend(dailyCounts, periods);
+        // 只把近期活跃集群喂给预测模型，避开古早离群点
+        List<Map<String, Object>> recentCounts = filterRecentCluster(dailyCounts);
+
+        Map<String, Object> result = pythonIntelligenceClient.forecastTrend(recentCounts, periods);
+
+        // 将完整历史数据返回前端用于可视化（含古早数据点），
+        // 但模型拟合值 yhat 仅存在于近期集群的日期中
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> modelHistorical = (List<Map<String, Object>>) result.get("historical");
+        Map<String, Object> yhatByDate = new HashMap<>();
+        if (modelHistorical != null) {
+            for (Map<String, Object> h : modelHistorical) {
+                Object yhat = h.get("yhat");
+                if (yhat != null) {
+                    yhatByDate.put((String) h.get("date"), yhat);
+                }
+            }
+        }
+
+        List<Map<String, Object>> fullHistorical = new ArrayList<>();
+        for (Map<String, Object> d : dailyCounts) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("date", d.get("date"));
+            item.put("count", d.get("count"));
+            Object yhat = yhatByDate.get((String) d.get("date"));
+            if (yhat != null) {
+                item.put("yhat", yhat);
+            }
+            fullHistorical.add(item);
+        }
 
         Map<String, Object> response = new HashMap<>();
         response.put("eventId", eventId);
         response.put("eventTitle", event.getTitle());
         response.put("method", result.get("method"));
-        response.put("historical", result.get("historical"));
+        response.put("historical", fullHistorical);
         response.put("forecast", result.get("forecast"));
         response.put("trend", result.get("trend"));
         response.put("note", result.get("note"));
@@ -554,21 +652,62 @@ public class EventServiceImpl implements EventService {
             }
         }
 
-        // 排序并填充缺失日期
+        // 只返回有数据的日期（不做零值填充，避免古早文章拉出数千天空白）
         if (dateCounts.isEmpty()) return List.of();
 
-        List<LocalDate> sortedDates = new ArrayList<>(dateCounts.keySet());
-        sortedDates.sort(LocalDate::compareTo);
-        LocalDate start = sortedDates.get(0);
-        LocalDate end = sortedDates.get(sortedDates.size() - 1);
-
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("date", d.toString());
-            item.put("count", dateCounts.getOrDefault(d, 0L).intValue());
-            result.add(item);
-        }
-        return result;
+        return dateCounts.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("date", e.getKey().toString());
+                    item.put("count", e.getValue().intValue());
+                    return item;
+                })
+                .toList();
     }
+
+    /**
+     * 从最新的日期向前扫描，>90天间隙处断开，只保留近期活跃集群。
+     * 用于趋势预测模型，避免古早数据点干扰拟合。
+     */
+    private List<Map<String, Object>> filterRecentCluster(List<Map<String, Object>> dailyCounts) {
+        if (dailyCounts.size() <= 1) return dailyCounts;
+
+        // 按日期排序
+        List<Map<String, Object>> sorted = dailyCounts.stream()
+                .sorted((a, b) -> ((String) a.get("date")).compareTo((String) b.get("date")))
+                .toList();
+
+        List<Map<String, Object>> cluster = new ArrayList<>();
+        LocalDate prevDate = null;
+
+        for (int i = sorted.size() - 1; i >= 0; i--) {
+            Map<String, Object> item = sorted.get(i);
+            String dateStr = (String) item.get("date");
+            if (dateStr == null || dateStr.length() < 10) {
+                cluster.add(item);
+                continue;
+            }
+
+            LocalDate d;
+            try { d = LocalDate.parse(dateStr.substring(0, 10)); }
+            catch (Exception e) { cluster.add(item); continue; }
+
+            if (prevDate == null) {
+                cluster.add(item);
+                prevDate = d;
+                continue;
+            }
+
+            long gapDays = Math.abs(java.time.temporal.ChronoUnit.DAYS.between(prevDate, d));
+            if (gapDays > 90) break;
+
+            cluster.add(item);
+            prevDate = d;
+        }
+
+        Collections.reverse(cluster);
+        return cluster;
+    }
+
 }

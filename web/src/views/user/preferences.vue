@@ -160,9 +160,7 @@ async function handleAddKeyword() {
     newKeyword.value = ''
     showKeywordDialog.value = false
     await loadKeywords()
-  } catch {
-    ElMessage.error('添加失败')
-  }
+  } catch {}
 }
 
 async function handleDeleteKeyword(id) {
@@ -215,9 +213,7 @@ async function handleAddDomain() {
     newDomain.value = ''
     showDomainDialog.value = false
     await loadDomains()
-  } catch {
-    ElMessage.error('添加失败')
-  }
+  } catch {}
 }
 
 async function handleDeleteDomain(id) {
@@ -252,9 +248,7 @@ async function handleToggleSource(row, val) {
       ElMessage.success('已取消订阅')
     }
     await loadSources()
-  } catch {
-    ElMessage.error('操作失败')
-  }
+  } catch {}
 }
 
 onMounted(() => {

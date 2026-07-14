@@ -34,6 +34,7 @@ public class BatchTopicResult {
     public String getKeyword() { return keyword; }
     public int getTotalSources() { return totalSources; }
     public int getTotalSuccess() { return totalSuccess; }
+    public void setTotalSuccess(int totalSuccess) { this.totalSuccess = totalSuccess; }
     public int getTotalFailed() { return totalFailed; }
     public List<SourceTopicResult> getSourceResults() { return sourceResults; }
     public List<ArticleRaw> getSavedArticles() { return savedArticles; }

@@ -169,11 +169,32 @@
         <div ref="trendChartRef" style="width:100%;height:350px"></div>
       </div>
     </el-dialog>
+
+    <!-- 聚类结果弹窗 -->
+    <el-dialog v-model="clusterResultVisible" title="聚类分析结果" width="480px">
+      <el-descriptions :column="1" border>
+        <el-descriptions-item label="输入文章数">{{ clusterResult?.totalArticles || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="聚类成功">
+          <span style="color:#67C23A;font-weight:bold">{{ clusterResult?.clusteredArticles || 0 }}</span>
+          <span style="color:#909399;margin-left:4px">篇（{{ clusterResult?.totalArticles ? (clusterResult.clusteredArticles / clusterResult.totalArticles * 100).toFixed(1) : 0 }}%）</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="噪点文章">
+          <span :style="{color: noiseRate > 40 ? '#F56C6C' : noiseRate > 20 ? '#E6A23C' : '#67C23A', fontWeight:'bold'}">{{ clusterResult?.unclusteredArticles || 0 }}</span>
+          <span style="color:#909399;margin-left:4px">篇（噪点率 {{ noiseRate.toFixed(1) }}%）</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="生成事件数">
+          <el-tag type="primary">{{ clusterResult?.events?.length || 0 }}</el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button type="primary" @click="clusterResultVisible = false">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { listEvents, clusterEvents, forecastTrend, deleteEvent } from '@/api/event'
 import { traceSource, analyzePropagation } from '@/api/propagation'
@@ -192,6 +213,12 @@ const pageSize = ref(10)
 
 const clustering = ref(false)
 const clusterVisible = ref(false)
+const clusterResultVisible = ref(false)
+const clusterResult = ref(null)
+const noiseRate = computed(() => {
+  if (!clusterResult.value || !clusterResult.value.totalArticles) return 0
+  return clusterResult.value.unclusteredArticles / clusterResult.value.totalArticles * 100
+})
 const threshold = ref(0.25)
 
 const filterCategory = ref('')
@@ -244,8 +271,6 @@ async function fetchData() {
       tableData.value = data.records || data || []
       total.value = data.total || 0
     }
-  } catch (e) {
-    ElMessage.error('加载事件列表失败')
   } finally {
     loading.value = false
   }
@@ -266,18 +291,15 @@ async function doCluster() {
     const res = await clusterEvents({ threshold: threshold.value })
     if (res.code === 200 && res.data?.success) {
       const data = res.data
-      ElMessage.success(
-        `聚类完成：${data.events?.length || 0} 个事件，` +
-        `覆盖 ${data.clusteredArticles} 篇文章，` +
-        `${data.unclusteredArticles} 篇未归类`
-      )
+      clusterResult.value = data
       clusterVisible.value = false
+      clusterResultVisible.value = true
       await fetchData()
     } else {
       ElMessage.error(res.data?.message || '聚类失败')
     }
   } catch (e) {
-    ElMessage.error('聚类请求失败: ' + e.message)
+    // error already toasted by global interceptor
   } finally {
     clustering.value = false
   }
@@ -288,7 +310,7 @@ async function doTraceSource(row) {
     const res = await traceSource(row.id)
     sourceResult.value = res.data
     sourceVisible.value = true
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function doAnalyzePath(row) {
@@ -298,7 +320,7 @@ async function doAnalyzePath(row) {
     pathVisible.value = true
     await nextTick()
     renderPathGraph()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 function renderPathGraph() {
@@ -376,7 +398,7 @@ async function doGenerateReport(row) {
     reportVisible.value = true
     await nextTick()
     renderReportTimeline()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 function parseReportContent(json) {
@@ -423,7 +445,7 @@ async function doForecastTrend(row) {
       trendLoading.value = false
     }
   } catch (e) {
-    trendError.value = '趋势预测请求失败: ' + e.message
+    trendError.value = '趋势预测请求失败'
     trendLoading.value = false
   }
 }
@@ -520,7 +542,7 @@ async function handleDelete(row) {
     await deleteEvent(row.id)
     ElMessage.success('事件已删除')
     fetchData()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchDeleteEvents() {
@@ -533,7 +555,7 @@ async function batchDeleteEvents() {
     ElMessage.success(`批量删除 ${rows.length} 个事件完成`)
     selectedRows.value = []
     fetchData()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 onMounted(fetchData)

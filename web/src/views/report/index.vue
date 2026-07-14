@@ -103,7 +103,7 @@ async function fetchData() {
     const res = await getReports({ pageNum: page.pageNum, pageSize: page.pageSize })
     tableData.value = res.data?.records || res.data || []
     total.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { loading.value = false }
 }
 
@@ -130,7 +130,7 @@ async function handleGenerate() {
     ElMessage.success('报告已生成')
     nextTick(() => renderTimeline())
     fetchData()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { generating.value = false }
 }
 
@@ -155,7 +155,7 @@ async function handleDeleteReport(row) {
     await deleteReport(row.id)
     ElMessage.success('报告已删除')
     fetchData()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchDeleteReports() {
@@ -168,7 +168,7 @@ async function batchDeleteReports() {
     ElMessage.success(`批量删除 ${rows.length} 个报告完成`)
     selectedReportRows.value = []
     fetchData()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 onMounted(fetchData)

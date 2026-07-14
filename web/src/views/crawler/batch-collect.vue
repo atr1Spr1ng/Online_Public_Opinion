@@ -63,7 +63,7 @@ async function handleUrlCollect() {
     ElMessage.success('文章已入库，可前往内容清洗处理')
     urlForm.url = ''
   } catch (e) {
-    ElMessage.error(e.message || '采集失败')
+    // error already toasted by global interceptor
   } finally {
     urlCollecting.value = false
   }
@@ -106,7 +106,7 @@ async function handleBatchCollect() {
       ElMessage.success(`已触发 ${batchForm.sourceIds.length} 个新闻源采集任务，可前往内容清洗查看`)
     }
   } catch (e) {
-    ElMessage.error(e.message || '采集失败')
+    // error already toasted by global interceptor
   } finally {
     batchCollecting.value = false
   }

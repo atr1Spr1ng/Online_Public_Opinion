@@ -174,7 +174,7 @@ class PropagationService:
             except Exception:
                 pass
 
-        spread_speed = round(total_nodes / max(duration_hours, 0.1), 2)
+        spread_speed = round(total_nodes / max(duration_hours, 0.1), 4)
 
         return PropagationResponse(
             spread_depth=max_depth,

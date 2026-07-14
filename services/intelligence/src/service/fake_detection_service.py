@@ -117,17 +117,27 @@ class FakeDetectionService:
             f"夸张格式: {f_format.score:.4f}",
         ]
 
-        # ── Step 2: LLM 深度检测（可用时） ──
+        # ── Step 2: LLM 文本质量评估（可用时） ──
         if FakeDetectionConfig.enabled() and self.client:
             llm_result = self._call_llm(text)
             if llm_result is not None:
-                llm_score = llm_result.get("fake_score", rule_score)
-                llm_reason = llm_result.get("reason", "")
-                # 混合分数: 规则40% + LLM 60%（LLM 更可靠）
-                hybrid_score = round(rule_score * 0.4 + llm_score * 0.6, 4)
+                # 从文本质量维度推导虚假分数：
+                # 缺乏来源 + 逻辑矛盾 + 情绪煽动 + 信息不完整 → 更可能是虚假
+                src = llm_result.get("source_citation", 0.5)
+                coh = llm_result.get("logical_coherence", 0.5)
+                emo = llm_result.get("emotional_manipulation", 0.5)
+                inf = llm_result.get("information_completeness", 0.5)
+                analysis = llm_result.get("analysis", "")
+
+                llm_fake_score = round(
+                    (1 - src) * 0.35 + (1 - coh) * 0.30 + emo * 0.20 + (1 - inf) * 0.15, 4
+                )
+                # 混合分数: 规则50% + LLM 50%
+                hybrid_score = round(rule_score * 0.5 + llm_fake_score * 0.5, 4)
                 is_hybrid_fake = hybrid_score >= 0.5
-                details_parts.append(f"LLM得分: {llm_score:.4f}")
-                details_parts.append(f"LLM理由: {llm_reason}")
+                details_parts.append(f"LLM文本质量-来源引用: {src:.2f}, 逻辑: {coh:.2f}, 情绪: {emo:.2f}, 信息完整: {inf:.2f}")
+                details_parts.append(f"LLM分析: {analysis}")
+                details_parts.append(f"LLM推导虚假分: {llm_fake_score:.4f}")
                 details_parts.append(f"混合得分: {hybrid_score:.4f}")
 
                 return FakeDetectionResponse(
@@ -249,19 +259,18 @@ class FakeDetectionService:
     # ── LLM 调用 ──────────────────────────────────────────────────
 
     def _call_llm(self, text: str) -> dict | None:
-        """调用 DeepSeek 做虚假文本判断，返回 {fake_score, reason}"""
+        """调用 DeepSeek 评估文本质量维度，返回 {source_citation, logical_coherence, ...}"""
         try:
-            # 截断文本防止过长
             truncated = text[:2000] if len(text) > 2000 else text
 
             response = self.client.chat.completions.create(
                 model=FakeDetectionConfig.model,
                 messages=[
                     {"role": "system", "content": FAKE_DETECTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": f"请判断以下文本是否为虚假/不可信信息:\n\n{truncated}"}
+                    {"role": "user", "content": f"请评估以下新闻文本的写作质量:\n\n{truncated}"}
                 ],
                 temperature=0.3,
-                max_tokens=200,
+                max_tokens=300,
             )
             content = response.choices[0].message.content
             return self._parse_llm_response(content)
@@ -271,36 +280,22 @@ class FakeDetectionService:
             return None
 
     def _parse_llm_response(self, content: str) -> dict:
-        """解析 LLM 返回的内容，提取 fake_score"""
-        # 1. 尝试 JSON 解析（主力）
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            try:
+        """解析 LLM 返回的文本质量维度评分"""
+        result = {
+            "source_citation": 0.5,
+            "logical_coherence": 0.5,
+            "emotional_manipulation": 0.5,
+            "information_completeness": 0.5,
+            "analysis": "",
+        }
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
                 data = json.loads(json_match.group())
-                score = float(data.get("fake_score", 0.5))
-                reason = data.get("reason", content or "")
-                return {"fake_score": max(0.0, min(1.0, score)), "reason": reason}
-            except (json.JSONDecodeError, ValueError, KeyError):
-                pass
-
-        # 2. 降级：正则提取数值
-        score = 0.5
-        reason = content or ""
-        match = re.search(r'(?:虚假|fake).*?(?:评分|分数|score).*?(\d+\.?\d*)', content, re.IGNORECASE)
-        if match:
-            val = float(match.group(1))
-            score = val / 10.0 if val > 1 else val
-        else:
-            # 3. 再次降级：关键词硬猜
-            content_lower = content.lower()
-            if any(w in content_lower for w in ["高度可疑", "虚假信息", "明显造假", "fake", "fabricated"]):
-                score = 0.8
-            elif any(w in content_lower for w in ["可疑", "可能存在", "不实", "misleading", "unverified"]):
-                score = 0.6
-            elif any(w in content_lower for w in ["基本可信", "可信", "真实", "credible", "authentic"]):
-                score = 0.3
-            elif any(w in content_lower for w in ["完全可信", "确认真实", "confirmed"]):
-                score = 0.1
-
-        score = max(0.0, min(1.0, score))
-        return {"fake_score": score, "reason": reason}
+                for key in result:
+                    if key in data and key != "analysis":
+                        result[key] = max(0.0, min(1.0, float(data[key])))
+                result["analysis"] = str(data.get("analysis", ""))
+        except (json.JSONDecodeError, ValueError, KeyError):
+            pass
+        return result

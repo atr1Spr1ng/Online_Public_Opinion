@@ -114,6 +114,34 @@
         </el-table>
       </el-card>
 
+      <!-- 相似事件 -->
+      <el-card shadow="never" style="margin-bottom:16px">
+        <template #header><span style="font-weight:600">相似事件</span></template>
+        <el-table v-if="similarEvents.length" :data="similarEvents" border stripe size="small">
+          <el-table-column prop="eventId" label="ID" width="70" />
+          <el-table-column prop="title" label="事件标题" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="category" label="分类" width="90">
+            <template #default="{ row }">
+              <el-tag :type="categoryType(row.category)" size="small">{{ row.category || '其他' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="similarity" label="相似度" width="90">
+            <template #default="{ row }">
+              <span :style="{ color: row.similarity >= 0.6 ? '#F56C6C' : row.similarity >= 0.4 ? '#E6A23C' : '#909399' }">
+                {{ (row.similarity * 100).toFixed(1) }}%
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80">
+            <template #default="{ row }">
+              <el-button type="primary" text @click="goToEvent(row.eventId)">查看</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-else-if="similarLoading" style="text-align:center;padding:20px;color:#909399">加载中...</div>
+        <div v-else style="text-align:center;padding:20px;color:#909399">暂无相似事件</div>
+      </el-card>
+
       <!-- 智能问答 -->
       <el-card shadow="never">
         <template #header><span style="font-weight:600">智能问答</span></template>
@@ -147,7 +175,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getEventReport } from '@/api/event'
+import { getEventReport, findSimilarEvents } from '@/api/event'
 import { qaReport } from '@/api/report'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
@@ -159,6 +187,9 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+
+const similarEvents = ref([])
+const similarLoading = ref(false)
 
 const qaInput = ref('')
 const qaLoading = ref(false)
@@ -210,6 +241,8 @@ async function fetchData() {
       data.value = res.data
       await nextTick()
       renderCharts()
+      // 加载相似事件
+      fetchSimilarEvents()
     } else {
       error.value = res.message || '加载失败'
     }
@@ -217,6 +250,20 @@ async function fetchData() {
     error.value = '加载事件详情失败: ' + (e.message || '未知错误')
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchSimilarEvents() {
+  const keywords = data.value?.event?.keywords
+  if (!keywords) return
+  similarLoading.value = true
+  try {
+    const res = await findSimilarEvents({ keywords, topK: 5 })
+    similarEvents.value = res.data || []
+  } catch {
+    similarEvents.value = []
+  } finally {
+    similarLoading.value = false
   }
 }
 
@@ -375,6 +422,10 @@ async function doAsk() {
   // scroll to bottom
   const qaDiv = document.querySelector('[ref="qaContainer"]')
   if (qaDiv) qaDiv.scrollTop = qaDiv.scrollHeight
+}
+
+function goToEvent(eventId) {
+  window.location.href = '/event/' + eventId
 }
 
 function handleResize() {

@@ -57,6 +57,7 @@
         <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="cleanId" label="文章ID" width="80" />
+        <el-table-column prop="title" label="文章标题" show-overflow-tooltip min-width="200" />
         <el-table-column prop="fakeScore" label="虚假分数" width="120">
           <template #default="{ row }">
             <el-progress :percentage="+(row.fakeScore * 100).toFixed(1)" :color="row.fakeScore > 0.5 ? '#F56C6C' : '#67C23A'" />
@@ -68,10 +69,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="detectionMethod" label="方法" width="80" />
-        <el-table-column prop="details" label="检测详情" show-overflow-tooltip min-width="250" />
         <el-table-column prop="createTime" label="时间" width="170" />
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="200">
           <template #default="{ row }">
+            <el-button type="primary" link @click="showDetail(row)">详情</el-button>
+            <el-button v-if="row.originalUrl" type="primary" link @click="openUrl(row.originalUrl)">查看原文</el-button>
             <el-popconfirm title="确定删除该检测结果？" @confirm="handleDeleteResult(row)">
               <template #reference>
                 <el-button type="danger" link>删除</el-button>
@@ -86,6 +88,20 @@
         :total="resultTotal" layout="total, prev, pager, next" @change="fetchResults"
       />
     </el-card>
+
+    <!-- 检测详情弹窗 -->
+    <el-dialog v-model="detailVisible" title="虚假检测详情" width="600px">
+      <el-descriptions :column="1" border>
+        <el-descriptions-item label="文章ID">{{ detailRow?.cleanId }}</el-descriptions-item>
+        <el-descriptions-item label="虚假分数">{{ (detailRow?.fakeScore * 100).toFixed(1) }}%</el-descriptions-item>
+        <el-descriptions-item label="判定">
+          <el-tag :type="detailRow?.isFake ? 'danger' : 'success'">{{ detailRow?.isFake ? '虚假' : '正常' }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="检测方法">{{ detailRow?.detectionMethod }}</el-descriptions-item>
+        <el-descriptions-item label="检测时间">{{ detailRow?.createTime }}</el-descriptions-item>
+        <el-descriptions-item label="详情">{{ detailRow?.details || '无' }}</el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
 
   </div>
 </template>
@@ -109,7 +125,7 @@ async function fetchCleanArticles() {
     const res = await getCleanArticles({ pageNum: cleanPage.pageNum, pageSize: cleanPage.pageSize, excludeDetected: true })
     cleanArticles.value = res.data?.records || res.data || []
     cleanTotal.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { cleanLoading.value = false }
 }
 
@@ -120,13 +136,24 @@ const resultTotal = ref(0)
 const resultPage = reactive({ pageNum: 1, pageSize: 10 })
 const selectedResultRows = ref([])
 
+// ---- 详情弹窗 ----
+const detailVisible = ref(false)
+const detailRow = ref(null)
+function showDetail(row) {
+  detailRow.value = row
+  detailVisible.value = true
+}
+function openUrl(url) {
+  window.open(url, '_blank')
+}
+
 async function fetchResults() {
   resultLoading.value = true
   try {
     const res = await getFakeResults({ pageNum: resultPage.pageNum, pageSize: resultPage.pageSize })
     resultData.value = res.data?.records || res.data || []
     resultTotal.value = res.data?.total || res.total || 0
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
   finally { resultLoading.value = false }
 }
 
@@ -137,7 +164,7 @@ async function detectOne(row) {
     ElMessage.success(`「${row.title || row.id}」检测完成`)
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchDetect() {
@@ -147,7 +174,7 @@ async function batchDetect() {
     selectedCleanIds.value = []
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchRedetect() {
@@ -158,7 +185,7 @@ async function batchRedetect() {
     ElMessage.success(`重新检测 ${ids.length} 篇文章完成`)
     selectedResultRows.value = []
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function batchDeleteResults() {
@@ -172,7 +199,7 @@ async function batchDeleteResults() {
     selectedResultRows.value = []
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 async function handleDeleteResult(row) {
@@ -181,7 +208,7 @@ async function handleDeleteResult(row) {
     ElMessage.success('检测结果已删除')
     fetchCleanArticles()
     fetchResults()
-  } catch (e) { ElMessage.error(e.message) }
+  } catch {}
 }
 
 onMounted(() => {
