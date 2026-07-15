@@ -5,6 +5,8 @@ import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.fake.dto.FakeDetectionRequest;
 import com.bupt.publicopinion.fake.service.FakeDetectionService;
 import com.bupt.publicopinion.fake.vo.FakeDetectionResult;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/fake")
@@ -38,8 +41,8 @@ public class FakeDetectionController {
     }
 
     @PostMapping("/batch-detect")
-    public ApiResult<List<FakeDetectionResult>> batchDetect(@RequestBody List<Long> cleanIds) {
-        return ApiResult.success(fakeDetectionService.batchDetect(cleanIds));
+    public ApiResult<ProcessingTask> batchDetect(@RequestBody JsonNode body) {
+        return ApiResult.success(fakeDetectionService.batchDetect(parseCleanIds(body), parseMode(body)));
     }
 
     @GetMapping("/{id}")
@@ -60,5 +63,23 @@ public class FakeDetectionController {
     public ApiResult<Void> deleteFakeResult(@PathVariable Long id) {
         fakeDetectionService.deleteFakeResult(id);
         return ApiResult.success();
+    }
+
+    private List<Long> parseCleanIds(JsonNode body) {
+        JsonNode idsNode = body != null && body.isObject() ? body.get("cleanIds") : body;
+        List<Long> ids = new ArrayList<>();
+        if (idsNode != null && idsNode.isArray()) {
+            idsNode.forEach(node -> {
+                if (node.canConvertToLong()) ids.add(node.asLong());
+            });
+        }
+        return ids;
+    }
+
+    private String parseMode(JsonNode body) {
+        if (body != null && body.isObject() && body.hasNonNull("mode")) {
+            return body.get("mode").asText();
+        }
+        return null;
     }
 }

@@ -2,9 +2,9 @@ from datetime import datetime, timezone
 
 import httpx
 
-from config.settings import CrawlerSettings, settings
-from exception.crawler_exception import CrawlerException
-from model.social_hot_item import SocialHotItem, SocialHotResult
+from src.config.settings import CrawlerSettings, settings
+from src.exception.crawler_exception import CrawlerException
+from src.model.social_hot_item import SocialHotItem, SocialHotResult
 
 
 class SocialMediaAdapter:

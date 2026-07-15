@@ -5,6 +5,7 @@ class FakeDetectionRequest(BaseModel):
     title: str = ""
     content: str = ""
     language: str = "zh"
+    mode: str | None = None
 
 
 class FakeDetectionFeature(BaseModel):

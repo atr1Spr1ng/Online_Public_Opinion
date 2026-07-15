@@ -8,8 +8,8 @@ export function analyzeSentiment(data) {
   return request({ url: '/analysis/sentiment', method: 'post', data })
 }
 
-export function batchSentiment(ids) {
-  return request({ url: '/analysis/batch-sentiment', method: 'post', data: ids })
+export function batchSentiment(ids, mode = 'auto') {
+  return request({ url: '/analysis/batch-sentiment', method: 'post', data: { cleanIds: ids, mode } })
 }
 
 export function getSentimentResults(params) {

@@ -8,7 +8,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from src.model.clustering_model import ArticleItem, EventCluster, ClusterResponse
+from src.model.clustering_model import ArticleItem, EventCluster, ClusterResponse, ExistingEventInfo
 from src.config import EventSummaryConfig, EVENT_NAMING_SYSTEM_PROMPT
 from src.service.embedding_service import EmbeddingService
 
@@ -34,13 +34,16 @@ class ClusteringService:
                 logger.warning("Failed to init Clustering LLM client: %s", e)
         return self._llm_client
 
-    def cluster(self, articles: list[ArticleItem], threshold: float = 0.25) -> ClusterResponse:
+    def cluster(self, articles: list[ArticleItem], threshold: float = 0.25, min_cluster_size: int = 3) -> ClusterResponse:
         t0 = time.time()
         total_input = len(articles)
+        min_cluster_size = self._normalize_min_cluster_size(min_cluster_size)
+        articles, boilerplate_noise_count = self._filter_boilerplate_articles(articles)
         logger.info("=" * 60)
-        logger.info("Clustering START: %d articles, threshold=%.2f", total_input, threshold)
+        logger.info("Clustering START: %d articles, threshold=%.2f, min_cluster_size=%d",
+                    total_input, threshold, min_cluster_size)
         if not articles:
-            return ClusterResponse(events=[], total_articles=0, clustered_articles=0, unclustered_articles=0)
+            return ClusterResponse(events=[], total_articles=total_input, clustered_articles=0, unclustered_articles=total_input)
 
         # 构建关键词集合（用于降级方案和命名）
         keyword_sets: dict[int, set[str]] = {}
@@ -62,7 +65,7 @@ class ClusteringService:
             clusters, hdbscan_noise = self._cluster_by_jaccard(articles, keyword_sets, threshold)
             logger.info("[Step 1] Jaccard fallback: %d clusters, %d noise (no-keyword)", len(clusters), hdbscan_noise)
 
-        noise_count = hdbscan_noise
+        noise_count = hdbscan_noise + boilerplate_noise_count
 
         # 后处理：簇内一致性剪枝，剔除与簇中心余弦距离过远的离群文章
         t2 = time.time()
@@ -89,14 +92,15 @@ class ClusteringService:
             logger.info("[Step 3] Merge: 0 clusters merged")
 
         # 排除噪声簇（HDBSCAN 标记的 _noise），这些文章已在 noise_count 中
-        valid_clusters = [c for c in clusters if len(c["ids"]) >= 2 and not c.get("_noise")]
-        single_dropped = 0
+        valid_clusters = [c for c in clusters if len(c["ids"]) >= min_cluster_size and not c.get("_noise")]
+        small_dropped = 0
         for c in clusters:
-            if len(c["ids"]) < 2 and not c.get("_noise"):
+            if len(c["ids"]) < min_cluster_size and not c.get("_noise"):
                 noise_count += len(c["ids"])
-                single_dropped += len(c["ids"])
-        if single_dropped > 0:
-            logger.info("[Step 4] Single-drop: %d articles in single-article clusters discarded", single_dropped)
+                small_dropped += len(c["ids"])
+        if small_dropped > 0:
+            logger.info("[Step 4] Small-cluster-drop: %d articles in clusters smaller than %d discarded",
+                        small_dropped, min_cluster_size)
 
         events: list[EventCluster] = []
         now = datetime.now()
@@ -139,7 +143,7 @@ class ClusteringService:
                 keywords=top_keywords,
                 article_ids=list(cluster["ids"]),
                 article_count=article_count,
-                hotness=round(hotness, 2),
+                hotness=round(hotness, 1),
                 lifecycle=lifecycle,
                 start_time=start_time,
                 end_time=end_time,
@@ -155,6 +159,373 @@ class ClusteringService:
             clustered_articles=sum(e.article_count for e in events),
             unclustered_articles=noise_count,
         )
+
+    def incremental_cluster(
+        self,
+        articles: list[ArticleItem],
+        existing_events: list,
+        threshold: float = 0.25,
+        match_threshold: float = 0.65,
+        min_cluster_size: int = 3,
+    ) -> ClusterResponse:
+        """增量聚类：先匹配已有事件，剩余文章再 HDBSCAN 聚类。
+
+        1. 编码所有文章
+        2. 计算每个已有事件的质心向量
+        3. 文章与事件质心余弦相似度 > match_threshold → 归入该事件
+        4. 未匹配文章 → HDBSCAN 聚类 → 新事件
+        """
+        t0 = time.time()
+        total_input = len(articles)
+        min_cluster_size = self._normalize_min_cluster_size(min_cluster_size)
+        articles, boilerplate_noise_count = self._filter_boilerplate_articles(articles)
+        logger.info("=" * 60)
+        logger.info("Incremental Clustering START: %d articles, %d existing events, threshold=%.2f, match=%.2f, min_cluster_size=%d",
+                    total_input, len(existing_events), threshold, match_threshold, min_cluster_size)
+
+        if not articles:
+            return ClusterResponse(events=[], total_articles=total_input, clustered_articles=0, unclustered_articles=total_input)
+
+        # 构建关键词集合（用于降级命名）
+        keyword_sets: dict[int, set[str]] = {}
+        for a in articles:
+            kw = a.keywords or ""
+            keyword_sets[a.id] = set(k.strip() for k in kw.split(",") if k.strip())
+
+        # 1. 编码所有文章
+        embed_service = EmbeddingService()
+        if not embed_service.available:
+            logger.warning("EmbeddingService not available, falling back to full Jaccard clustering")
+            return self._full_cluster_fallback(articles, keyword_sets, threshold, min_cluster_size)
+
+        texts = []
+        for a in articles:
+            title = a.title or ""
+            summary = a.summary or ""
+            texts.append(f"{title} {summary}"[:256])
+
+        t_encode = time.time()
+        vectors = embed_service.encode(texts)
+        if vectors.shape[0] == 0:
+            return ClusterResponse(events=[], total_articles=total_input, clustered_articles=0, unclustered_articles=total_input)
+        logger.info("[TIMING] Incremental encode: %.1fs", time.time() - t_encode)
+
+        # id → index 映射
+        id_to_idx: dict[int, int] = {a.id: i for i, a in enumerate(articles)}
+
+        # 2. 将文章匹配到已有事件
+        assigned: dict[int, int] = {}  # article_id → event_id
+        event_new_articles: dict[int, list[ArticleItem]] = {}  # event_id → new articles
+
+        if existing_events:
+            # 计算每个已有事件的质心向量
+            event_centroids: dict[int, np.ndarray] = {}
+            for ev in existing_events:
+                indices = [id_to_idx[a_id] for a_id in ev.article_ids if a_id in id_to_idx]
+                if len(indices) < 1:
+                    continue
+                ev_vectors = vectors[indices]
+                centroid = np.mean(ev_vectors, axis=0)
+                norm = np.linalg.norm(centroid)
+                if norm > 0:
+                    centroid = centroid / norm
+                event_centroids[ev.event_id] = centroid
+
+            if event_centroids:
+                event_ids = list(event_centroids.keys())
+                centroid_matrix = np.stack([event_centroids[eid] for eid in event_ids])
+
+                # 对所有文章计算与所有事件质心的余弦相似度
+                sim_matrix = np.dot(vectors, centroid_matrix.T)  # (n_articles, n_events)
+
+                for i, a in enumerate(articles):
+                    best_j = int(np.argmax(sim_matrix[i]))
+                    best_sim = float(sim_matrix[i][best_j])
+                    if best_sim >= match_threshold:
+                        matched_eid = event_ids[best_j]
+                        assigned[a.id] = matched_eid
+                        event_new_articles.setdefault(matched_eid, []).append(a)
+
+                logger.info("[Incremental] Matched %d articles to %d existing events",
+                            len(assigned), len(event_new_articles))
+
+        # 3. 未匹配文章 → HDBSCAN 聚类 → 新事件
+        unmatched = [a for a in articles if a.id not in assigned]
+        logger.info("[Incremental] %d articles unmatched, will cluster for new events", len(unmatched))
+
+        events: list[EventCluster] = []
+        now = datetime.now()
+
+        # 处理已有事件（有新增文章的需要重算热度/生命周期/时间范围）
+        for ev in existing_events:
+            new_arts = event_new_articles.get(ev.event_id, [])
+            if not new_arts:
+                continue  # 没新文章的事件不返回（前端不需要更新）
+
+            # 合并旧文章（当前批次中存在的）+ 新文章
+            old_arts_in_batch = [articles[id_to_idx[a_id]] for a_id in ev.article_ids if a_id in id_to_idx]
+            all_arts = old_arts_in_batch + new_arts
+            # 去重
+            seen = set()
+            all_arts_dedup = []
+            for a in all_arts:
+                if a.id not in seen:
+                    seen.add(a.id)
+                    all_arts_dedup.append(a)
+
+            article_count = len(all_arts_dedup)
+            if article_count < min_cluster_size:
+                continue
+            hotness = self._calc_hotness(all_arts_dedup, now)
+            lifecycle = self._calc_lifecycle(all_arts_dedup, now)
+
+            times = [a.published_at for a in all_arts_dedup if a.published_at]
+            times.sort()
+            start_time = times[0] if times else ""
+            end_time = times[-1] if times else ""
+
+            # 用已有事件的标题和关键词（不重新生成）
+            events.append(EventCluster(
+                event_id=ev.event_id,
+                title=ev.title,
+                keywords=ev.keywords,
+                article_ids=list(seen),
+                article_count=article_count,
+                hotness=round(hotness, 1),
+                lifecycle=lifecycle,
+                start_time=start_time,
+                end_time=end_time,
+                is_existing=True,
+            ))
+
+        # 对未匹配文章聚类 → 新事件
+        if unmatched:
+            unmatched_indices = [id_to_idx[a.id] for a in unmatched]
+            unmatched_vectors = vectors[unmatched_indices]
+
+            new_events = self._cluster_unmatched(unmatched, unmatched_vectors, keyword_sets, now, min_cluster_size)
+            events.extend(new_events)
+
+        events.sort(key=lambda e: e.hotness, reverse=True)
+
+        matched_count = len(assigned)
+        new_clustered = sum(e.article_count for e in events if not e.is_existing)
+        updated_clustered = sum(e.article_count for e in events if e.is_existing)
+        noise_count = max(total_input - updated_clustered - new_clustered, 0)
+        noise_count = max(noise_count, boilerplate_noise_count)
+
+        logger.info("[TIMING] TOTAL incremental_cluster(): %.1fs", time.time() - t0)
+        logger.info("[Incremental] Result: %d events (%d updated, %d new), %d matched, %d noise",
+                    len(events), sum(1 for e in events if e.is_existing),
+                    sum(1 for e in events if not e.is_existing), matched_count, noise_count)
+
+        return ClusterResponse(
+            events=events,
+            total_articles=total_input,
+            clustered_articles=updated_clustered + new_clustered,
+            unclustered_articles=noise_count,
+        )
+
+    def _cluster_unmatched(
+        self,
+        articles: list[ArticleItem],
+        vectors: np.ndarray,
+        keyword_sets: dict[int, set[str]],
+        now: datetime,
+        min_cluster_size: int = 3,
+    ) -> list[EventCluster]:
+        """对未匹配文章执行 HDBSCAN 聚类，返回新事件列表"""
+        min_cluster_size = self._normalize_min_cluster_size(min_cluster_size)
+        if not articles:
+            return []
+
+        clusters = None
+        hdbscan_noise = 0
+
+        t1 = time.time()
+        try:
+            import hdbscan
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=2,
+                min_samples=1,
+                metric='euclidean',
+                cluster_selection_epsilon=0.15,
+            )
+            labels = clusterer.fit_predict(vectors)
+            logger.info("[NewEvent HDBSCAN] fit_predict: %.1fs, %d clusters, %d noise",
+                        time.time() - t1,
+                        len(set(labels)) - (1 if -1 in labels else 0),
+                        (labels == -1).sum())
+
+            clusters = []
+            for label in set(labels):
+                indices = np.where(labels == label)[0]
+                group_articles = [articles[int(i)] for i in indices]
+                group_ids = {a.id for a in group_articles}
+                group_vectors = vectors[indices]
+                if label == -1:
+                    hdbscan_noise = len(group_articles)
+                else:
+                    clusters.append({
+                        "ids": group_ids,
+                        "articles": group_articles,
+                        "_vectors": group_vectors,
+                    })
+        except Exception as e:
+            logger.error("HDBSCAN for new events failed: %s", e)
+            return []
+
+        # 剪枝
+        if clusters:
+            clusters, pruned = self._prune_cluster_outliers(clusters)
+            hdbscan_noise += pruned
+            # 合并
+            clusters = self._merge_similar_clusters(clusters, threshold=0.92)
+
+        # 过滤噪声和单篇文章簇
+        valid_clusters = [c for c in clusters if len(c["ids"]) >= min_cluster_size and not c.get("_noise")]
+
+        # LLM 命名
+        names_by_idx: dict[int, tuple[str, list[str]]] = {}
+        if valid_clusters:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _name(idx, cluster):
+                arts = cluster["articles"]
+                title, top_keywords = self._generate_event_name(arts, keyword_sets)
+                return (idx, title, top_keywords)
+
+            t_name = time.time()
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {pool.submit(_name, i, c): i for i, c in enumerate(valid_clusters)}
+                for future in as_completed(futures):
+                    idx, title, top_keywords = future.result()
+                    names_by_idx[idx] = (title, top_keywords)
+            logger.info("[NewEvent Naming] %d clusters: %.1fs", len(valid_clusters), time.time() - t_name)
+
+        events = []
+        for i, cluster in enumerate(valid_clusters):
+            title, top_keywords = names_by_idx[i]
+            arts = cluster["articles"]
+
+            article_count = len(arts)
+            hotness = self._calc_hotness(arts, now)
+            lifecycle = self._calc_lifecycle(arts, now)
+
+            times = [a.published_at for a in arts if a.published_at]
+            times.sort()
+            start_time = times[0] if times else ""
+            end_time = times[-1] if times else ""
+
+            events.append(EventCluster(
+                event_id=-1,  # temporary, backend will assign DB ID
+                title=title,
+                keywords=top_keywords,
+                article_ids=list(cluster["ids"]),
+                article_count=article_count,
+                hotness=round(hotness, 1),
+                lifecycle=lifecycle,
+                start_time=start_time,
+                end_time=end_time,
+                is_existing=False,
+            ))
+
+        return events
+
+    def _full_cluster_fallback(
+        self,
+        articles: list[ArticleItem],
+        keyword_sets: dict[int, set[str]],
+        threshold: float,
+        min_cluster_size: int = 3,
+    ) -> ClusterResponse:
+        """当 EmbeddingService 不可用时的降级：Jaccard 全量聚类"""
+        min_cluster_size = self._normalize_min_cluster_size(min_cluster_size)
+        articles, boilerplate_noise_count = self._filter_boilerplate_articles(articles)
+        clusters, no_keyword_count = self._cluster_by_jaccard(articles, keyword_sets, threshold)
+        valid_clusters = [c for c in clusters if len(c["ids"]) >= min_cluster_size]
+
+        events: list[EventCluster] = []
+        now = datetime.now()
+        for i, cluster in enumerate(valid_clusters):
+            arts = cluster["articles"]
+            title, top_keywords = self._generate_by_frequency(arts, keyword_sets)
+
+            article_count = len(arts)
+            hotness = self._calc_hotness(arts, now)
+            lifecycle = self._calc_lifecycle(arts, now)
+
+            times = [a.published_at for a in arts if a.published_at]
+            times.sort()
+            start_time = times[0] if times else ""
+            end_time = times[-1] if times else ""
+
+            events.append(EventCluster(
+                event_id=i + 1,
+                title=title,
+                keywords=top_keywords,
+                article_ids=list(cluster["ids"]),
+                article_count=article_count,
+                hotness=round(hotness, 1),
+                lifecycle=lifecycle,
+                start_time=start_time,
+                end_time=end_time,
+                is_existing=False,
+            ))
+
+        events.sort(key=lambda e: e.hotness, reverse=True)
+        return ClusterResponse(
+            events=events,
+            total_articles=len(articles) + boilerplate_noise_count,
+            clustered_articles=sum(e.article_count for e in events),
+            unclustered_articles=boilerplate_noise_count + no_keyword_count + sum(
+                len(c["ids"]) for c in clusters if len(c["ids"]) < min_cluster_size
+            ),
+        )
+
+    @staticmethod
+    def _normalize_min_cluster_size(value: int | None) -> int:
+        if value is None:
+            return 3
+        return max(2, min(int(value), 20))
+
+    def _filter_boilerplate_articles(self, articles: list[ArticleItem]) -> tuple[list[ArticleItem], int]:
+        kept = []
+        dropped = 0
+        for article in articles:
+            text = " ".join([
+                article.title or "",
+                article.keywords or "",
+                article.summary or "",
+            ])
+            if self._is_boilerplate_noise_text(text):
+                dropped += 1
+            else:
+                kept.append(article)
+        if dropped:
+            logger.info("Boilerplate filter: dropped %d copyright/site-template articles", dropped)
+        return kept, dropped
+
+    @staticmethod
+    def _is_boilerplate_noise_text(text: str) -> bool:
+        if not text:
+            return False
+        normalized = re.sub(r'\s+', ' ', text).strip().lower()
+        terms = [
+            "copyright",
+            "rights",
+            "all rights reserved",
+            "版权所有",
+            "未经授权禁止转载",
+            "刊用",
+            "务经",
+            "授权",
+            "建立镜像",
+            "chinanews",
+            "sina corporation",
+        ]
+        hits = sum(1 for term in terms if term in normalized)
+        return hits >= 3
 
     def _cluster_by_hdbscan(self, articles: list[ArticleItem]) -> tuple[list[dict] | None, int]:
         """稠密向量 + HDBSCAN 聚类，失败返回 (None, 0)。
@@ -188,7 +559,7 @@ class ClusteringService:
                 min_cluster_size=2,
                 min_samples=1,
                 metric='euclidean',
-                cluster_selection_epsilon=0.08,
+                cluster_selection_epsilon=0.15,
             )
             labels = clusterer.fit_predict(vectors)
             logger.info("[HDBSCAN internal] fit_predict done: %.1fs", time.time() - t_encode)
@@ -515,7 +886,7 @@ class ClusteringService:
 
     def _calc_hotness(self, articles: list[ArticleItem], now: datetime) -> float:
         """热度 = 文章数 × 时间衰减"""
-        decay_factor = 0.1
+        decay_factor = 0.05
         article_count = len(articles)
 
         # 找最近的发布时间
@@ -535,7 +906,11 @@ class ClusteringService:
 
     def _calc_lifecycle(self, articles: list[ArticleItem], now: datetime) -> str:
         """根据文章时间分布判断生命周期阶段"""
-        if len(articles) < 2:
+        article_count = len(articles)
+
+        # 低文章数事件不直接归噪音，但生命周期只能是潜伏/观察状态。
+        # 低热度事件即使时间分布集中，也不应被判为高潮期。
+        if article_count <= 3:
             return "潜伏期"
 
         times = []
@@ -547,9 +922,18 @@ class ClusteringService:
             return "潜伏期"
 
         times.sort()
+        latest_age_hours = (now - times[-1]).total_seconds() / 3600
+        latest_age_hours = max(latest_age_hours, 0)
         total_span = (times[-1] - times[0]).total_seconds() / 3600  # hours
         if total_span <= 0:
             return "潜伏期"
+
+        # 4-7 篇属于低热度事件：最多到成长期，不进入高潮期。
+        # 这样避免“几篇文章短时间集中出现 → 被误判为爆发/高潮”的问题。
+        if article_count < 8:
+            if latest_age_hours > 72:
+                return "衰退期"
+            return "成长期"
 
         # 分段计数：前1/3、中1/3、后1/3
         third = total_span / 3
@@ -557,13 +941,24 @@ class ClusteringService:
         first_count = sum(1 for t in times if (t - t0).total_seconds() / 3600 < third)
         mid_count = sum(1 for t in times if third <= (t - t0).total_seconds() / 3600 < 2 * third)
         last_count = len(times) - first_count - mid_count
+        recent_24h_count = sum(1 for t in times if (now - t).total_seconds() <= 24 * 3600)
+        recent_ratio = recent_24h_count / article_count
 
-        # 随时间衰减 → 衰退期
+        # 最近没有新报道，优先判衰退。
+        if latest_age_hours > 72 and last_count <= max(first_count, mid_count):
+            return "衰退期"
+
+        # 高潮期必须同时满足：文章量足够、近期占比足够、后段或中段显著活跃。
+        # 低热度或只有零星报道的事件不会进入高潮期。
+        if article_count >= 15 and recent_ratio >= 0.45 and (last_count >= mid_count or mid_count >= first_count):
+            return "高潮期"
+
+        # 近期报道明显增加，但尚未达到高潮门槛。
         if last_count > mid_count or (mid_count > first_count and first_count > 0):
             return "成长期"
-        elif mid_count >= last_count and mid_count >= first_count:
-            return "高潮期"
-        elif first_count > mid_count and last_count < mid_count:
+
+        # 早期报道更多，近期回落。
+        if first_count > mid_count and last_count < mid_count:
             return "衰退期"
 
         return "成长期"

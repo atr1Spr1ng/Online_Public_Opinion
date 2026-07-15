@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException, status
 
-from exception.crawler_exception import CrawlerException
-from model.crawl_result import CrawlResult
-from model.news_collect_result import NewsCollectResult
-from model.news_discover_request import NewsDiscoverRequest
-from model.news_discover_result import NewsDiscoverResult
-from model.news_request import NewsCrawlRequest
-from model.topic_search_request import TopicSearchRequest
-from model.topic_search_result import TopicSearchResult
-from service.crawler_service import CrawlerService
+from src.exception.crawler_exception import CrawlerException
+from src.model.crawl_result import CrawlResult
+from src.model.news_collect_result import NewsCollectResult
+from src.model.news_discover_request import NewsDiscoverRequest
+from src.model.news_discover_result import NewsDiscoverResult
+from src.model.news_request import NewsCrawlRequest
+from src.model.topic_search_request import TopicSearchRequest
+from src.model.topic_search_result import TopicSearchResult
+from src.service.crawler_service import CrawlerService
 
 router = APIRouter(prefix="/internal/crawler/news", tags=["news crawler"])
 service = CrawlerService()

@@ -11,6 +11,11 @@ public interface UserService {
     User findByUsername(String username);
 
     /**
+     * 根据用户名查找用户，不过滤启用状态。主要用于登录时区分用户不存在和账号禁用。
+     */
+    User findByUsernameIncludingDisabled(String username);
+
+    /**
      * 根据用户ID查找用户。
      */
     User findById(Long id);

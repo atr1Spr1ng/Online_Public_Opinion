@@ -2,6 +2,8 @@ package com.bupt.publicopinion.search.service;
 
 import co.elastic.clients.elasticsearch._types.query_dsl.Like;
 import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
+import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
+import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.event.entity.Event;
 import com.bupt.publicopinion.search.document.ArticleDocument;
@@ -15,15 +17,21 @@ import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.data.elasticsearch.core.query.DeleteQuery;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class SearchSyncService {
 
     private final ElasticsearchOperations elasticsearchOperations;
+    private final PythonIntelligenceClient pythonIntelligenceClient;
 
-    public SearchSyncService(ElasticsearchOperations elasticsearchOperations) {
+    public SearchSyncService(ElasticsearchOperations elasticsearchOperations,
+                             PythonIntelligenceClient pythonIntelligenceClient) {
         this.elasticsearchOperations = elasticsearchOperations;
+        this.pythonIntelligenceClient = pythonIntelligenceClient;
     }
 
     /**
@@ -208,7 +216,7 @@ public class SearchSyncService {
     }
 
     /**
-     * 按关键词检索历史事件（ES multi_match）
+     * 混合检索历史事件：BM25 初筛 → M3E 语义重排序 → 融合打分
      */
     public Page<EventDocument> searchEvents(String keyword, int pageNum, int pageSize) {
         if (keyword == null || keyword.isBlank()) {
@@ -225,6 +233,7 @@ public class SearchSyncService {
             );
         }
 
+        // BM25 第一轮召回（取较多候选，交由语义排序精排）
         NativeQuery query = NativeQuery.builder()
                 .withQuery(q -> q
                         .multiMatch(mm -> mm
@@ -233,20 +242,70 @@ public class SearchSyncService {
                                 .type(TextQueryType.BestFields)
                         )
                 )
-                .withPageable(PageRequest.of(pageNum - 1, pageSize))
+                .withMaxResults(50)
                 .build();
 
         SearchHits<EventDocument> hits = elasticsearchOperations.search(query, EventDocument.class);
 
-        float maxScore = hits.getMaxScore();
-        float minScore = maxScore * 0.3f;
+        float maxBm25 = hits.getMaxScore();
+        float minScore = maxBm25 * 0.2f;
 
-        List<EventDocument> results = hits.getSearchHits().stream()
+        List<EventDocument> bm25Results = hits.getSearchHits().stream()
                 .filter(h -> h.getScore() >= minScore)
                 .map(h -> h.getContent())
                 .toList();
+
+        if (bm25Results.isEmpty()) {
+            return new org.springframework.data.domain.PageImpl<>(
+                    List.of(), PageRequest.of(pageNum - 1, pageSize), 0
+            );
+        }
+
+        List<Map<String, Object>> candidates = new ArrayList<>();
+        Map<Long, Float> bm25ScoreMap = new HashMap<>();
+        for (var h : hits.getSearchHits()) {
+            EventDocument doc = h.getContent();
+            if (h.getScore() < minScore) continue;
+            Map<String, Object> c = new HashMap<>();
+            c.put("id", doc.getId());
+            c.put("title", doc.getTitle() != null ? doc.getTitle() : "");
+            c.put("keywords", doc.getKeywords() != null ? doc.getKeywords() : "");
+            candidates.add(c);
+            bm25ScoreMap.put(doc.getId(), h.getScore());
+        }
+
+        // 语义重排序
+        List<PythonIntelligenceClient.SemanticRankHit> semanticHits =
+                pythonIntelligenceClient.semanticRank(keyword, candidates);
+
+        // 融合打分：0.2 × BM25归一化 + 0.8 × 语义相似度（语义主导，BM25辅助）
+        List<EventDocument> merged;
+        if (semanticHits.isEmpty()) {
+            merged = bm25Results;
+        } else {
+            Map<Long, Double> fusedMap = new HashMap<>();
+            for (var sh : semanticHits) {
+                if (sh.score() < 0.25) continue; // 语义分过低，直接丢弃
+                float bm25Norm = maxBm25 > 0 ? bm25ScoreMap.getOrDefault(sh.id(), 0f) / maxBm25 : 0f;
+                fusedMap.put(sh.id(), 0.2 * bm25Norm + 0.8 * sh.score());
+            }
+            merged = bm25Results.stream()
+                    .filter(doc -> fusedMap.containsKey(doc.getId()))
+                    .sorted((a, b) -> Double.compare(
+                            fusedMap.get(b.getId()),
+                            fusedMap.get(a.getId())))
+                    .toList();
+        }
+
+        // 分页截取
+        int start = (pageNum - 1) * pageSize;
+        int end = Math.min(start + pageSize, merged.size());
+        List<EventDocument> page = start < merged.size()
+                ? merged.subList(start, end)
+                : List.of();
+
         return new org.springframework.data.domain.PageImpl<>(
-                results, PageRequest.of(pageNum - 1, pageSize), results.size()
+                page, PageRequest.of(pageNum - 1, pageSize), merged.size()
         );
     }
 
@@ -275,6 +334,13 @@ public class SearchSyncService {
                 .map(h -> new EventSimilarHit(h.getContent(),
                         maxScore > 0 ? (double) (h.getScore() / maxScore) : 0.0))
                 .toList();
+    }
+
+    /**
+     * 从 ES 删除单个事件文档
+     */
+    public void deleteEvent(Long id) {
+        elasticsearchOperations.delete(String.valueOf(id), EventDocument.class);
     }
 
     /**

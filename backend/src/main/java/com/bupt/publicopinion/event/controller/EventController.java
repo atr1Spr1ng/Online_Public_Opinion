@@ -5,6 +5,7 @@ import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.event.dto.EventClusterRequest;
 import com.bupt.publicopinion.event.dto.SimilarEventRequest;
 import com.bupt.publicopinion.event.service.EventService;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,8 +23,8 @@ public class EventController {
     }
 
     @PostMapping("/cluster")
-    public ApiResult<Map<String, Object>> cluster(@RequestBody @Valid EventClusterRequest request) {
-        return ApiResult.success(eventService.clusterAndSave(request.threshold()));
+    public ApiResult<ProcessingTask> cluster(@RequestBody @Valid EventClusterRequest request) {
+        return ApiResult.success(eventService.clusterAsync(request.threshold(), request.days(), request.minClusterSize()));
     }
 
     @GetMapping

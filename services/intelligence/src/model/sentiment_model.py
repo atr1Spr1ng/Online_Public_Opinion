@@ -5,6 +5,7 @@ class SentimentRequest(BaseModel):
     title: str = ""
     content: str = ""
     language: str = "zh"
+    mode: str | None = None
 
 
 class SentimentWord(BaseModel):

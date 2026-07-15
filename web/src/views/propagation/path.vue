@@ -71,8 +71,13 @@ function renderGraph() {
   const typeName = { official: '官方媒体', commercial: '商业媒体', social: '社交媒体' }
 
   const nodes = result.value.nodes.map(n => ({
-    id: n.cleanId,
+    id: String(n.cleanId),
     name: n.articleTitle || `文章#${n.cleanId}`,
+    sourceName: n.sourceName,
+    nodeType: n.nodeType,
+    isSource: n.isSource,
+    isInfluencer: n.isInfluencer,
+    isHistorical: n.isHistorical,
     symbolSize: n.isHistorical ? 20 : n.isSource ? 44 : n.isInfluencer ? 36 : Math.max(18, 32 - (n.depth || 0) * 3),
     symbol: n.isInfluencer ? 'diamond' : 'circle',
     itemStyle: n.isHistorical
@@ -108,7 +113,7 @@ function renderGraph() {
     tooltip: {
       formatter: p => {
         if (p.dataType === 'node') {
-          const n = result.value.nodes.find(x => x.cleanId == p.id) || {}
+          const n = p.data || {}
           const tags = [n.isSource && '源头', n.isInfluencer && '★关键', n.isHistorical && '历史', typeName[n.nodeType]].filter(Boolean).join(' | ')
           return `${p.name}<br/>来源: ${n.sourceName || '未知'}<br/>${tags}`
         }

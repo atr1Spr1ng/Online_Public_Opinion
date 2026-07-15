@@ -3,6 +3,7 @@ package com.bupt.publicopinion.fake.service;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.fake.dto.FakeDetectionRequest;
 import com.bupt.publicopinion.fake.vo.FakeDetectionResult;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
 
 import java.util.List;
 
@@ -10,7 +11,9 @@ public interface FakeDetectionService {
 
     FakeDetectionResult detect(FakeDetectionRequest request);
 
-    List<FakeDetectionResult> batchDetect(List<Long> cleanIds);
+    ProcessingTask batchDetect(List<Long> cleanIds);
+
+    ProcessingTask batchDetect(List<Long> cleanIds, String mode);
 
     FakeDetectionResult getResult(Long id);
 

@@ -2,24 +2,19 @@
   <div>
     <!-- 平台统计卡片（可点击下钻） -->
     <el-row :gutter="20" class="stats-row">
-      <el-col :span="6">
+      <el-col :span="8">
         <el-card class="clickable-card" @click="openDialog('articles', '原始文章列表')">
           <div class="stat-item"><div class="stat-num">{{ stats.totalArticles }}</div><div class="stat-label">原始文章</div></div>
         </el-card>
       </el-col>
-      <el-col :span="6">
+      <el-col :span="8">
         <el-card class="clickable-card" @click="openDialog('cleaned', '已清洗文章列表')">
           <div class="stat-item"><div class="stat-num">{{ stats.totalCleaned }}</div><div class="stat-label">已清洗</div></div>
         </el-card>
       </el-col>
-      <el-col :span="6">
+      <el-col :span="8">
         <el-card class="clickable-card" @click="openDialog('events', '舆情事件列表')">
           <div class="stat-item"><div class="stat-num">{{ stats.totalEvents }}</div><div class="stat-label">舆情事件</div></div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card class="clickable-card" @click="openDialog('articles', '今日新增文章')">
-          <div class="stat-item"><div class="stat-num">{{ stats.todayArticles }}</div><div class="stat-label">今日新增</div></div>
         </el-card>
       </el-col>
     </el-row>

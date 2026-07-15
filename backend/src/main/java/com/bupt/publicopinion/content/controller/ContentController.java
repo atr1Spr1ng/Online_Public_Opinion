@@ -6,6 +6,7 @@ import com.bupt.publicopinion.content.dto.CleanRequest;
 import com.bupt.publicopinion.content.entity.ArticleClean;
 import com.bupt.publicopinion.content.service.ContentService;
 import com.bupt.publicopinion.content.vo.CleanResult;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,7 +39,7 @@ public class ContentController {
     }
 
     @PostMapping("/batch-clean")
-    public ApiResult<List<CleanResult>> batchClean(@RequestBody List<Long> rawIds) {
+    public ApiResult<ProcessingTask> batchClean(@RequestBody List<Long> rawIds) {
         return ApiResult.success(contentService.batchClean(rawIds));
     }
 

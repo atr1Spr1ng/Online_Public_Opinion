@@ -174,6 +174,175 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     @Override
+    public CrawlerTaskSaveResult createTopicSearchCrawlTask(TopicSearchRequest request) {
+        return createTopicCrawlTask(request, "关键词采集：", "topic_search", false);
+    }
+
+    @Override
+    public CrawlerTaskSaveResult createHotTopicCrawlTask(TopicSearchRequest request) {
+        return createTopicCrawlTask(request, "热搜话题：", "hot_topic", true);
+    }
+
+    private CrawlerTaskSaveResult createTopicCrawlTask(
+            TopicSearchRequest request,
+            String taskNamePrefix,
+            String sourceType,
+            boolean stopAtTargetSuccess
+    ) {
+        int limit = normalizeLimit(request.getLimit());
+        Long userId = getCurrentUser().userId();
+        String keyword = request.getKeyword() != null ? request.getKeyword().trim() : "";
+        int sourceCount = request.getSourceIds() == null ? 0 : request.getSourceIds().size();
+
+        CrawlTask task = new CrawlTask();
+        task.setUserId(userId);
+        task.setSourceUrl(sourceType + "://" + keyword);
+        task.setSourceName(taskNamePrefix + keyword);
+        task.setSourceType(sourceType);
+        task.setRequestLimit(stopAtTargetSuccess ? limit : limit * Math.max(sourceCount, 1));
+        task.setTotalDiscovered(0);
+        task.setTotalSuccess(0);
+        task.setTotalDuplicate(0);
+        task.setTotalFailed(0);
+        task.setStatus("RUNNING");
+        crawlTaskMapper.insert(task);
+
+        CompletableFuture.runAsync(
+                () -> doTopicCrawl(task.getId(), keyword, request.getSourceIds(), limit, userId, stopAtTargetSuccess),
+                crawlTaskExecutor
+        ).exceptionally(ex -> {
+            log.error("{}采集任务 {} 异常: {}", taskNamePrefix, task.getId(), ex.getMessage());
+            CrawlTask failedTask = crawlTaskMapper.selectById(task.getId());
+            if (failedTask != null) {
+                failedTask.setStatus("FAILED");
+                failedTask.setTotalFailed(failedTask.getTotalFailed() != null ? failedTask.getTotalFailed() + 1 : 1);
+                crawlTaskMapper.updateById(failedTask);
+            }
+            return null;
+        });
+
+        return new CrawlerTaskSaveResult(
+                task.getId(),
+                null,
+                task.getSourceName(),
+                task.getSourceType(),
+                task.getSourceUrl(),
+                0,
+                0,
+                0,
+                0,
+                task.getStatus()
+        );
+    }
+
+    private void doTopicCrawl(
+            Long taskId,
+            String keyword,
+            List<Long> sourceIds,
+            int limit,
+            Long userId,
+            boolean stopAtTargetSuccess
+    ) {
+        List<NewsSource> sources = newsSourceMapper.selectBatchIds(sourceIds);
+        int totalDiscovered = 0;
+        int successCount = 0;
+        int duplicateCount = 0;
+        int failedCount = 0;
+
+        int perSourceLimit = stopAtTargetSuccess
+                ? Math.max(1, Math.min(limit, Math.max(3, (int) Math.ceil(limit / Math.max(sources.size(), 1.0)) + 2)))
+                : limit;
+
+        for (NewsSource source : sources) {
+            if (stopAtTargetSuccess && successCount >= limit) {
+                break;
+            }
+
+            TopicSearchResult searchResult;
+            try {
+                searchResult = pythonCrawlerClient.searchByTopic(
+                        new PythonTopicSearchRequest(keyword, source.getSourceUrl(), perSourceLimit)
+                );
+            } catch (Exception e) {
+                failedCount++;
+                saveFailedTaskItem(taskId, new FailedNewsCrawl(
+                        source.getSourceUrl(),
+                        "来源搜索失败：" + source.getSourceName(),
+                        e.getMessage()
+                ));
+                updateCrawlTaskProgress(taskId, totalDiscovered, successCount, duplicateCount, failedCount, "RUNNING");
+                continue;
+            }
+
+            totalDiscovered += Math.max(searchResult.totalFound(), 0);
+
+            if (searchResult.articles() == null || searchResult.articles().isEmpty()) {
+                updateCrawlTaskProgress(taskId, totalDiscovered, successCount, duplicateCount, failedCount, "RUNNING");
+                continue;
+            }
+
+            for (NewsCrawlResult article : searchResult.articles()) {
+                if (stopAtTargetSuccess && successCount >= limit) {
+                    break;
+                }
+                if (!"SUCCESS".equals(article.extractStatus())) {
+                    failedCount++;
+                    saveFailedTaskItem(taskId, new FailedNewsCrawl(
+                            article.originalUrl(),
+                            article.title(),
+                            article.message()
+                    ));
+                    continue;
+                }
+
+                try {
+                    ArticleRaw existing = findArticleByOriginalUrl(article.originalUrl());
+                    if (existing != null) {
+                        duplicateCount++;
+                        saveDuplicateTaskItem(taskId, existing);
+                        continue;
+                    }
+                    ArticleRaw saved = saveArticle(article, searchResult.sourceName(), searchResult.sourceType(), userId);
+                    successCount++;
+                    saveSuccessTaskItem(taskId, saved);
+                } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                    duplicateCount++;
+                    saveFailedTaskItem(taskId, new FailedNewsCrawl(
+                            article.originalUrl(),
+                            article.title(),
+                            "并发重复入库，已跳过"
+                    ));
+                } catch (Exception e) {
+                    failedCount++;
+                    saveFailedTaskItem(taskId, new FailedNewsCrawl(
+                            article.originalUrl(),
+                            article.title(),
+                            e.getMessage()
+                    ));
+                }
+            }
+
+            updateCrawlTaskProgress(taskId, totalDiscovered, successCount, duplicateCount, failedCount, "RUNNING");
+        }
+
+        updateCrawlTaskProgress(taskId, totalDiscovered, successCount, duplicateCount, failedCount,
+                resolveTaskStatus(successCount, duplicateCount, failedCount));
+    }
+
+    private void updateCrawlTaskProgress(Long taskId, int totalDiscovered, int successCount, int duplicateCount, int failedCount, String status) {
+        CrawlTask task = crawlTaskMapper.selectById(taskId);
+        if (task == null) {
+            return;
+        }
+        task.setTotalDiscovered(totalDiscovered);
+        task.setTotalSuccess(successCount);
+        task.setTotalDuplicate(duplicateCount);
+        task.setTotalFailed(failedCount);
+        task.setStatus(status);
+        crawlTaskMapper.updateById(task);
+    }
+
+    @Override
     public SocialHotResult fetchSocialHot(String platform) {
         return pythonCrawlerClient.fetchSocialHot(platform);
     }
@@ -316,18 +485,25 @@ public class CrawlerServiceImpl implements CrawlerService {
     private void doCrawl(Long taskId, NewsDiscoverRequest request, Long userId) {
         try {
             NewsDiscoverResult discoverResult = pythonCrawlerClient.discoverNewsLinks(request);
+            CrawlTask currentTask = crawlTaskMapper.selectById(taskId);
+            NewsSource configuredSource = null;
+            if (currentTask != null && currentTask.getSourceId() != null) {
+                configuredSource = newsSourceMapper.selectById(currentTask.getSourceId());
+            }
+            String resolvedSourceName = resolveSourceName(configuredSource, discoverResult.sourceName());
+            String resolvedSourceType = resolveSourceType(configuredSource, discoverResult.sourceType());
             NewsSource source = saveOrUpdateSource(
                     discoverResult.sourceUrl(),
-                    discoverResult.sourceName(),
-                    discoverResult.sourceType()
+                    resolvedSourceName,
+                    resolvedSourceType
             );
 
             CrawlTask task = crawlTaskMapper.selectById(taskId);
             if (task == null) return;
             task.setSourceId(source.getId());
             task.setFinalUrl(discoverResult.finalUrl());
-            task.setSourceName(discoverResult.sourceName());
-            task.setSourceType(discoverResult.sourceType());
+            task.setSourceName(resolvedSourceName);
+            task.setSourceType(resolvedSourceType);
             task.setTotalDiscovered(discoverResult.totalFound());
             crawlTaskMapper.updateById(task);
 
@@ -364,7 +540,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                                 return;
                             }
 
-                            ArticleRaw articleRaw = saveArticle(article, discoverResult.sourceName(), discoverResult.sourceType(), userId);
+                            ArticleRaw articleRaw = saveArticle(article, resolvedSourceName, resolvedSourceType, userId);
                             successCount.incrementAndGet();
                             saveSuccessTaskItem(taskId, articleRaw);
                         } catch (RuntimeException exception) {
@@ -416,6 +592,12 @@ public class CrawlerServiceImpl implements CrawlerService {
     @Override
     public CrawlTaskDetailResult getCrawlTaskDetail(Long taskId) {
         CrawlTask task = crawlTaskMapper.selectById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("采集任务不存在: " + taskId);
+        }
+        if (!isAdmin() && (task.getUserId() == null || !task.getUserId().equals(currentUserId()))) {
+            throw new IllegalArgumentException("无权查看该采集任务: " + taskId);
+        }
         List<CrawlTaskItem> items = crawlTaskItemMapper.selectList(
                 new LambdaQueryWrapper<CrawlTaskItem>()
                         .eq(CrawlTaskItem::getTaskId, taskId)
@@ -512,8 +694,12 @@ public class CrawlerServiceImpl implements CrawlerService {
         NewsSource existing = newsSourceMapper.selectOne(buildUrlLookupQuery(normalizedUrl));
 
         if (existing != null) {
-            existing.setSourceName(sourceName);
-            existing.setSourceType(sourceType);
+            if (!isUnknownSourceName(sourceName)) {
+                existing.setSourceName(sourceName);
+            }
+            if (!isUnknownSourceType(sourceType)) {
+                existing.setSourceType(sourceType);
+            }
             existing.setStatus(1);
             newsSourceMapper.updateById(existing);
             return existing;
@@ -526,6 +712,39 @@ public class CrawlerServiceImpl implements CrawlerService {
         source.setStatus(1);
         newsSourceMapper.insert(source);
         return source;
+    }
+
+    private String resolveSourceName(NewsSource configuredSource, String discoveredName) {
+        if (configuredSource != null && !isUnknownSourceName(configuredSource.getSourceName())) {
+            return configuredSource.getSourceName();
+        }
+        if (!isUnknownSourceName(discoveredName)) {
+            return discoveredName;
+        }
+        return discoveredName;
+    }
+
+    private String resolveSourceType(NewsSource configuredSource, String discoveredType) {
+        if (configuredSource != null && !isUnknownSourceType(configuredSource.getSourceType())) {
+            return configuredSource.getSourceType();
+        }
+        if (!isUnknownSourceType(discoveredType)) {
+            return discoveredType;
+        }
+        return discoveredType;
+    }
+
+    private boolean isUnknownSourceName(String sourceName) {
+        return sourceName == null
+                || sourceName.isBlank()
+                || "未知新闻源".equals(sourceName)
+                || "未知来源".equals(sourceName);
+    }
+
+    private boolean isUnknownSourceType(String sourceType) {
+        return sourceType == null
+                || sourceType.isBlank()
+                || "unknown".equalsIgnoreCase(sourceType);
     }
 
     /**
@@ -579,23 +798,6 @@ public class CrawlerServiceImpl implements CrawlerService {
             normalized = normalized.toLowerCase();
         }
         return normalized;
-    }
-
-    private CrawlTask createPendingTask(NewsDiscoverRequest request, NewsDiscoverResult discoverResult, Long sourceId) {
-        CrawlTask task = new CrawlTask();
-        task.setSourceId(sourceId);
-        task.setSourceUrl(discoverResult.sourceUrl());
-        task.setFinalUrl(discoverResult.finalUrl());
-        task.setSourceName(discoverResult.sourceName());
-        task.setSourceType(discoverResult.sourceType());
-        task.setRequestLimit(request.limit());
-        task.setTotalDiscovered(discoverResult.totalFound());
-        task.setTotalSuccess(0);
-        task.setTotalDuplicate(0);
-        task.setTotalFailed(0);
-        task.setStatus("RUNNING");
-        crawlTaskMapper.insert(task);
-        return task;
     }
 
     private ArticleRaw findArticleByOriginalUrl(String originalUrl) {

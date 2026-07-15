@@ -6,6 +6,7 @@ class CleanRequest(BaseModel):
     content: str | None = None
     url: str | None = None
     language: str | None = None
+    mode: str | None = None
 
 
 class CleanResponse(BaseModel):

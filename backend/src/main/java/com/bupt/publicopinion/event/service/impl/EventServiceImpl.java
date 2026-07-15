@@ -6,6 +6,8 @@ import com.bupt.publicopinion.analysis.client.PythonIntelligenceClient;
 import com.bupt.publicopinion.analysis.entity.ArticleSentiment;
 import com.bupt.publicopinion.analysis.exception.IntelligenceServiceException;
 import com.bupt.publicopinion.analysis.mapper.ArticleSentimentMapper;
+import com.bupt.publicopinion.collection.entity.ArticleRaw;
+import com.bupt.publicopinion.collection.mapper.ArticleRawMapper;
 import com.bupt.publicopinion.common.context.UserContext;
 import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.content.entity.ArticleClean;
@@ -25,6 +27,8 @@ import com.bupt.publicopinion.search.service.SearchSyncService;
 import com.bupt.publicopinion.system.entity.UserDomain;
 import com.bupt.publicopinion.system.entity.UserKeyword;
 import com.bupt.publicopinion.system.service.UserPreferenceService;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
+import com.bupt.publicopinion.task.service.ProcessingTaskService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,41 +51,83 @@ import java.util.stream.Collectors;
 public class EventServiceImpl implements EventService {
 
     private static final int MAX_ARTICLES_FOR_CLUSTERING = 5000;
+    private static final int DEFAULT_CLUSTER_WINDOW_DAYS = 30;
+    private static final int MAX_CLUSTER_WINDOW_DAYS = 3650;
+    private static final int DEFAULT_MIN_CLUSTER_SIZE = 3;
 
     private final EventMapper eventMapper;
     private final EventArticleMapper eventArticleMapper;
     private final ArticleCleanMapper articleCleanMapper;
     private final ArticleSentimentMapper articleSentimentMapper;
+    private final ArticleRawMapper articleRawMapper;
     private final PythonIntelligenceClient pythonIntelligenceClient;
     private final SearchSyncService searchSyncService;
     private final UserPreferenceService userPreferenceService;
+    private final ProcessingTaskService processingTaskService;
 
     public EventServiceImpl(
             EventMapper eventMapper,
             EventArticleMapper eventArticleMapper,
             ArticleCleanMapper articleCleanMapper,
             ArticleSentimentMapper articleSentimentMapper,
+            ArticleRawMapper articleRawMapper,
             PythonIntelligenceClient pythonIntelligenceClient,
             SearchSyncService searchSyncService,
-            UserPreferenceService userPreferenceService
+            UserPreferenceService userPreferenceService,
+            ProcessingTaskService processingTaskService
     ) {
         this.eventMapper = eventMapper;
         this.eventArticleMapper = eventArticleMapper;
         this.articleCleanMapper = articleCleanMapper;
         this.articleSentimentMapper = articleSentimentMapper;
+        this.articleRawMapper = articleRawMapper;
         this.pythonIntelligenceClient = pythonIntelligenceClient;
         this.searchSyncService = searchSyncService;
         this.userPreferenceService = userPreferenceService;
+        this.processingTaskService = processingTaskService;
+    }
+
+    @Override
+    public ProcessingTask clusterAsync(double threshold, Integer days, Integer minClusterSize) {
+        int windowDays = normalizeClusterWindowDays(days);
+        int normalizedMinClusterSize = normalizeMinClusterSize(minClusterSize);
+        int total = estimateClusterArticleCount(windowDays);
+        ProcessingTask task = processingTaskService.createTask("EVENT_CLUSTER", "EVENT", total);
+        UserContext.UserContextInfo ctx = UserContext.get();
+        processingTaskService.runAsync(task.getId(), ctx, taskId -> {
+            Map<String, Object> result = clusterAndSave(threshold, windowDays, normalizedMinClusterSize);
+            boolean success = Boolean.TRUE.equals(result.get("success"));
+            if (success) {
+                int clustered = result.get("clusteredArticles") instanceof Number n ? n.intValue() : total;
+                int unclustered = result.get("unclusteredArticles") instanceof Number n ? n.intValue() : Math.max(total - clustered, 0);
+                processingTaskService.finish(taskId, total, 0,
+                        "事件聚类完成，范围：" + clusterWindowLabel(windowDays)
+                                + "；最小成簇 " + normalizedMinClusterSize + " 篇"
+                                + "；已聚类 " + clustered + " 篇，未成簇 " + unclustered + " 篇");
+            } else {
+                String message = String.valueOf(result.getOrDefault("message", "事件聚类失败"));
+                processingTaskService.recordItem(taskId, null, "STAGE", "事件聚类执行", "FAILED", message);
+                processingTaskService.fail(taskId, 0, total, message);
+            }
+        });
+        return task;
+    }
+
+    private int estimateClusterArticleCount(int windowDays) {
+        Long count = articleCleanMapper.selectCount(buildClusterArticleQuery(windowDays));
+        return (int) Math.min(count != null ? count : 0, MAX_ARTICLES_FOR_CLUSTERING);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> clusterAndSave(double threshold) {
+    public Map<String, Object> clusterAndSave(double threshold, Integer days, Integer minClusterSize) {
+        int windowDays = normalizeClusterWindowDays(days);
+        int normalizedMinClusterSize = normalizeMinClusterSize(minClusterSize);
         // 1. 取文章，限流
         List<ArticleClean> articles = articleCleanMapper.selectList(
-                new LambdaQueryWrapper<ArticleClean>()
-                        .isNotNull(ArticleClean::getKeywords)
-                        .ne(ArticleClean::getKeywords, "")
+                buildClusterArticleQuery(windowDays)
+                        .orderByDesc(ArticleClean::getPublishedAt)
+                        .orderByDesc(ArticleClean::getCreateTime)
                         .last("LIMIT " + MAX_ARTICLES_FOR_CLUSTERING)
         );
 
@@ -92,14 +138,31 @@ public class EventServiceImpl implements EventService {
             item.put("title", a.getTitle() != null ? a.getTitle() : "");
             item.put("keywords", a.getKeywords() != null ? a.getKeywords() : "");
             item.put("summary", a.getSummary() != null ? a.getSummary() : "");
-            item.put("published_at", a.getPublishedAt() != null ? a.getPublishedAt() : "");
+            item.put("published_at", a.getPublishedAt() != null ? a.getPublishedAt()
+                    : a.getCreateTime() != null ? a.getCreateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) : "");
             articleItems.add(item);
         }
 
-        // 2. 调 Python 聚类
+        // 2. 加载现有事件，传给 Python 做增量聚类
+        List<Event> oldEvents = eventMapper.selectList(new LambdaQueryWrapper<>());
+        List<PythonIntelligenceClient.ExistingEventInfo> existingEvents = new ArrayList<>();
+        for (Event oe : oldEvents) {
+            List<EventArticle> eas = eventArticleMapper.selectList(
+                    new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, oe.getId())
+            );
+            List<Long> articleIds = eas.stream().map(EventArticle::getCleanId).toList();
+            List<String> keywords = oe.getKeywords() != null
+                    ? List.of(oe.getKeywords().split(","))
+                    : List.of();
+            existingEvents.add(new PythonIntelligenceClient.ExistingEventInfo(
+                    oe.getId(), oe.getTitle(), keywords, articleIds));
+        }
+
+        // 3. 调 Python 增量聚类
         PythonIntelligenceClient.ClusterResult result;
         try {
-            result = pythonIntelligenceClient.clusterEvents(articleItems, threshold);
+            result = pythonIntelligenceClient.incrementalClusterEvents(
+                    articleItems, existingEvents, threshold, 0.65, normalizedMinClusterSize);
         } catch (IntelligenceServiceException e) {
             Map<String, Object> errorResult = new HashMap<>();
             errorResult.put("success", false);
@@ -108,29 +171,20 @@ public class EventServiceImpl implements EventService {
             return errorResult;
         }
 
-        // 3. 保存旧事件数据，用于 ID 继承匹配
-        List<Event> oldEvents = eventMapper.selectList(new LambdaQueryWrapper<>());
-        Map<Long, Set<Long>> oldEventArticles = new HashMap<>(); // eventId → cleanIds
-        for (Event oe : oldEvents) {
-            List<EventArticle> eas = eventArticleMapper.selectList(
-                    new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, oe.getId())
-            );
-            oldEventArticles.put(oe.getId(),
-                    eas.stream().map(EventArticle::getCleanId).collect(Collectors.toSet()));
-        }
-
         // 4. 收集所有有效 cleanId
         Set<Long> validCleanIds = articles.stream()
                 .map(ArticleClean::getId)
                 .collect(Collectors.toSet());
 
-        // 5. 分类（LLM + 关键词词典）
-        Map<Long, String> categoryMap = new HashMap<>();
-        if (!result.events().isEmpty()) {
+        // 5. 分类（LLM + 关键词词典）——仅对新事件分类
+        Map<Integer, String> categoryMap = new HashMap<>();
+        List<PythonIntelligenceClient.EventClusterItem> newEvents = result.events().stream()
+                .filter(e -> !e.isExisting()).toList();
+        if (!newEvents.isEmpty()) {
             try {
                 List<Map<String, Object>> eventItems = new ArrayList<>();
-                for (int i = 0; i < result.events().size(); i++) {
-                    var item = result.events().get(i);
+                for (int i = 0; i < newEvents.size(); i++) {
+                    var item = newEvents.get(i);
                     Map<String, Object> ei = new HashMap<>();
                     ei.put("event_id", i);
                     ei.put("title", item.title());
@@ -143,8 +197,8 @@ public class EventServiceImpl implements EventService {
                 for (Map<String, Object> ce : classified) {
                     int idx = ((Number) ce.get("event_id")).intValue();
                     String cat = (String) ce.get("category");
-                    if (idx < result.events().size()) {
-                        categoryMap.put((long) idx, cat != null ? cat : "其他");
+                    if (idx < newEvents.size()) {
+                        categoryMap.put(idx, cat != null ? cat : "其他");
                     }
                 }
             } catch (Exception e) {
@@ -152,66 +206,18 @@ public class EventServiceImpl implements EventService {
             }
         }
 
-        // 6. 新簇 → 旧事件 ID 匹配（≥50% 旧事件文章在新簇中 → 继承 ID）
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        Map<Integer, Long> inheritedIds = new HashMap<>();  // newClusterIdx → oldEventId
-        Set<Long> matchedOldEventIds = new HashSet<>();
-
-        for (int i = 0; i < result.events().size(); i++) {
-            Set<Long> newArticleIds = new HashSet<>(result.events().get(i).articleIds());
-            Long bestOldId = null;
-            double bestOverlap = 0.0;
-
-            for (var entry : oldEventArticles.entrySet()) {
-                Long oldId = entry.getKey();
-                Set<Long> oldIds = entry.getValue();
-                if (oldIds.isEmpty() || matchedOldEventIds.contains(oldId)) continue;
-
-                long overlap = oldIds.stream().filter(newArticleIds::contains).count();
-                double ratio = (double) overlap / oldIds.size();
-
-                if (ratio >= 0.5 && ratio > bestOverlap) {
-                    bestOverlap = ratio;
-                    bestOldId = oldId;
-                }
-            }
-
-            if (bestOldId != null) {
-                inheritedIds.put(i, bestOldId);
-                matchedOldEventIds.add(bestOldId);
-            }
-        }
-
-        // 7. 清除所有旧 event_article 关联
-        eventArticleMapper.delete(new LambdaQueryWrapper<>());
-
-        // 8. 删除未匹配的旧事件（噪声/不合理事件自动清理）
-        for (Event oe : oldEvents) {
-            if (!matchedOldEventIds.contains(oe.getId())) {
-                eventMapper.deleteById(oe.getId());
-            }
-        }
-
-        // 9. 清除并重建 ES 事件索引
-        try {
-            searchSyncService.deleteAllEvents();
-        } catch (Exception ex) {
-            System.err.println("[Event] ES 事件索引清除失败（ES 可能未启动）: " + ex.getMessage());
-        }
-
-        // 10. 写入事件：已匹配的更新，未匹配的新建
+        // 6. 处理增量聚类结果
         List<EventVO> savedEvents = new ArrayList<>();
         Long userId = UserContext.getRequired().userId();
+        int newEventIdx = 0;
 
-        for (int i = 0; i < result.events().size(); i++) {
-            PythonIntelligenceClient.EventClusterItem item = result.events().get(i);
+        for (PythonIntelligenceClient.EventClusterItem item : result.events()) {
             Event event = new Event();
             event.setTitle(item.title());
             event.setKeywords(String.join(",", item.keywords()));
             event.setArticleCount(item.articleCount());
             event.setHotness(BigDecimal.valueOf(item.hotness()));
             event.setLifecycle(item.lifecycle());
-            event.setCategory(categoryMap.getOrDefault((long) i, "其他"));
 
             if (!item.startTime().isEmpty()) {
                 event.setStartTime(parseDateTime(item.startTime()));
@@ -222,31 +228,52 @@ public class EventServiceImpl implements EventService {
 
             event.setUserId(userId);
 
-            Long inheritedId = inheritedIds.get(i);
-            if (inheritedId != null) {
-                // 更新已有事件，保留 ID
-                event.setId(inheritedId);
+            if (item.isExisting()) {
+                // 已有事件：Python 返回的 event_id 即数据库 ID，直接更新
+                long existingId = item.eventId();
+                event.setId(existingId);
+                String oldCategory = oldEvents.stream()
+                        .filter(oe -> oe.getId().equals(existingId))
+                        .findFirst().map(Event::getCategory).orElse("其他");
+                event.setCategory(oldCategory);
                 eventMapper.updateById(event);
+
+                // 重建 event_article 关联
+                eventArticleMapper.delete(
+                        new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, existingId)
+                );
+                for (Long cleanId : item.articleIds()) {
+                    if (!validCleanIds.contains(cleanId)) continue;
+                    EventArticle ea = new EventArticle();
+                    ea.setEventId(existingId);
+                    ea.setCleanId(cleanId);
+                    eventArticleMapper.insert(ea);
+                }
+                savedEvents.add(EventVO.from(event));
             } else {
-                // 新建事件
+                // 新事件：插入
+                event.setCategory(categoryMap.getOrDefault(newEventIdx, "其他"));
                 eventMapper.insert(event);
-            }
+                newEventIdx++;
 
-            // 写入事件-文章关联
-            for (Long cleanId : item.articleIds()) {
-                if (!validCleanIds.contains(cleanId)) continue;
-                EventArticle ea = new EventArticle();
-                ea.setEventId(event.getId());
-                ea.setCleanId(cleanId);
-                eventArticleMapper.insert(ea);
+                for (Long cleanId : item.articleIds()) {
+                    if (!validCleanIds.contains(cleanId)) continue;
+                    EventArticle ea = new EventArticle();
+                    ea.setEventId(event.getId());
+                    ea.setCleanId(cleanId);
+                    eventArticleMapper.insert(ea);
+                }
+                savedEvents.add(EventVO.from(event));
             }
-
-            savedEvents.add(EventVO.from(event));
         }
 
-        // 11. 同步事件到 ES
+        int removedSmallEvents = cleanupSmallEvents(userId, normalizedMinClusterSize);
+        int removedBoilerplateEvents = cleanupBoilerplateEvents(userId);
+
+        // 7. 同步事件到 ES
         List<Event> allCurrentEvents = eventMapper.selectList(new LambdaQueryWrapper<>());
         try {
+            searchSyncService.deleteAllEvents();
             searchSyncService.indexEvents(allCurrentEvents);
         } catch (Exception ex) {
             System.err.println("[Event] ES 事件索引同步失败: " + ex.getMessage());
@@ -255,11 +282,124 @@ public class EventServiceImpl implements EventService {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("events", savedEvents);
-        response.put("inheritedCount", inheritedIds.size());
+        response.put("inheritedCount", (int) result.events().stream().filter(PythonIntelligenceClient.EventClusterItem::isExisting).count());
         response.put("totalArticles", result.totalArticles());
         response.put("clusteredArticles", result.clusteredArticles());
         response.put("unclusteredArticles", result.unclusteredArticles());
+        response.put("windowDays", windowDays);
+        response.put("minClusterSize", normalizedMinClusterSize);
+        response.put("removedSmallEvents", removedSmallEvents);
+        response.put("removedBoilerplateEvents", removedBoilerplateEvents);
         return response;
+    }
+
+    private LambdaQueryWrapper<ArticleClean> buildClusterArticleQuery(int windowDays) {
+        LambdaQueryWrapper<ArticleClean> wrapper = new LambdaQueryWrapper<ArticleClean>()
+                .isNotNull(ArticleClean::getKeywords)
+                .ne(ArticleClean::getKeywords, "")
+                .isNotNull(ArticleClean::getPublishedAt)
+                .ne(ArticleClean::getPublishedAt, "")
+                .eq(ArticleClean::getStatus, "CLEANED");
+        if (windowDays > 0) {
+            String startDate = LocalDate.now().minusDays(windowDays).toString();
+            wrapper.ge(ArticleClean::getPublishedAt, startDate);
+        }
+        return wrapper;
+    }
+
+    private int normalizeClusterWindowDays(Integer days) {
+        if (days == null) {
+            return DEFAULT_CLUSTER_WINDOW_DAYS;
+        }
+        if (days <= 0) {
+            return 0;
+        }
+        return Math.min(days, MAX_CLUSTER_WINDOW_DAYS);
+    }
+
+    private int normalizeMinClusterSize(Integer minClusterSize) {
+        if (minClusterSize == null) {
+            return DEFAULT_MIN_CLUSTER_SIZE;
+        }
+        return Math.max(2, Math.min(minClusterSize, 20));
+    }
+
+    private int cleanupSmallEvents(Long userId, int minClusterSize) {
+        List<Event> smallEvents = eventMapper.selectList(
+                new LambdaQueryWrapper<Event>()
+                        .eq(Event::getUserId, userId)
+                        .lt(Event::getArticleCount, minClusterSize)
+        );
+        int removed = 0;
+        for (Event event : smallEvents) {
+            eventArticleMapper.delete(new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, event.getId()));
+            eventMapper.deleteById(event.getId());
+            removed++;
+        }
+        return removed;
+    }
+
+    private int cleanupBoilerplateEvents(Long userId) {
+        List<Event> events = eventMapper.selectList(
+                new LambdaQueryWrapper<Event>()
+                        .eq(Event::getUserId, userId)
+        );
+        int removed = 0;
+        for (Event event : events) {
+            String text = ((event.getTitle() != null ? event.getTitle() : "") + " "
+                    + (event.getKeywords() != null ? event.getKeywords() : "")).toLowerCase();
+            int hits = 0;
+            String[] terms = {"copyright", "rights", "版权所有", "授权", "刊用", "务经", "chinanews", "sina"};
+            for (String term : terms) {
+                if (text.contains(term)) hits++;
+            }
+            if (hits >= 3) {
+                eventArticleMapper.delete(new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, event.getId()));
+                eventMapper.deleteById(event.getId());
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    private String clusterWindowLabel(int days) {
+        return days <= 0 ? "全部历史" : "最近 " + days + " 天";
+    }
+
+    private String resolveArticleSourceName(ArticleClean article, Map<Long, String> rawSourceMap) {
+        if (article.getSourceName() != null && !article.getSourceName().isBlank()
+                && !"未知新闻源".equals(article.getSourceName())
+                && !"未知来源".equals(article.getSourceName())) {
+            return article.getSourceName();
+        }
+        String rawSource = rawSourceMap.get(article.getRawId());
+        if (rawSource != null && !rawSource.isBlank()) {
+            return rawSource;
+        }
+        return "未知来源";
+    }
+
+    private String previewText(String text, int maxLength) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength) + "……";
+    }
+
+    private boolean isMeaningfulKeyword(String word) {
+        if (word == null) return false;
+        String value = word.trim();
+        if (value.length() < 2) return false;
+        if (value.matches("\\d+")) return false;
+        if (value.matches("\\d{1,4}[年月日号点时分秒]?")) return false;
+        if (value.matches("\\d+(\\.\\d+)?%")) return false;
+        if (value.matches("[一二三四五六七八九十百千万亿]+[年月日号点时分秒]?")) return false;
+        return !Set.of(
+                "一个", "一些", "一种", "这个", "那个", "这些", "那些", "进行", "表示", "相关", "记者",
+                "报道", "消息", "目前", "今日", "昨日", "近日", "今天", "昨天", "明天", "时候", "方面",
+                "情况", "问题", "工作", "新华社", "央视网", "人民网", "中新网"
+        ).contains(value);
     }
 
     @Override
@@ -434,6 +574,7 @@ public class EventServiceImpl implements EventService {
                 new LambdaQueryWrapper<EventArticle>().eq(EventArticle::getEventId, id)
         );
         eventMapper.deleteById(id);
+        searchSyncService.deleteEvent(id);
     }
 
     @Override
@@ -525,11 +666,34 @@ public class EventServiceImpl implements EventService {
                             .in(ArticleClean::getId, cleanIds)
             );
 
+            // 批量查询原始文章信息，用于来源回退与原文链接
+            List<Long> rawIds = articles.stream()
+                    .map(ArticleClean::getRawId)
+                    .filter(id -> id != null)
+                    .distinct()
+                    .toList();
+            Map<Long, String> urlMap = new HashMap<>();
+            Map<Long, String> rawSourceMap = new HashMap<>();
+            if (!rawIds.isEmpty()) {
+                List<ArticleRaw> rawArticles = articleRawMapper.selectList(
+                        new LambdaQueryWrapper<ArticleRaw>()
+                                .select(ArticleRaw::getId, ArticleRaw::getOriginalUrl, ArticleRaw::getSourceName)
+                                .in(ArticleRaw::getId, rawIds)
+                );
+                for (ArticleRaw r : rawArticles) {
+                    if (r.getOriginalUrl() != null) {
+                        urlMap.put(r.getId(), r.getOriginalUrl());
+                    }
+                    if (r.getSourceName() != null && !r.getSourceName().isBlank()) {
+                        rawSourceMap.put(r.getId(), r.getSourceName());
+                    }
+                }
+            }
+
             // 平台分布
             Map<String, Long> sourceCounts = articles.stream()
                     .collect(Collectors.groupingBy(
-                            a -> a.getSourceName() != null && !a.getSourceName().isBlank()
-                                    ? a.getSourceName() : "未知来源",
+                            a -> resolveArticleSourceName(a, rawSourceMap),
                             Collectors.counting()
                     ));
             sourceDistribution = sourceCounts.entrySet().stream()
@@ -541,14 +705,17 @@ public class EventServiceImpl implements EventService {
                     })
                     .toList();
 
-            // 文章列表（仅返回基本信息）
+            // 文章列表
             articleList = articles.stream()
                     .map(a -> {
                         Map<String, Object> item = new HashMap<>();
                         item.put("id", a.getId());
                         item.put("title", a.getTitle() != null ? a.getTitle() : "");
-                        item.put("sourceName", a.getSourceName() != null ? a.getSourceName() : "");
+                        item.put("sourceName", resolveArticleSourceName(a, rawSourceMap));
                         item.put("publishedAt", a.getPublishedAt() != null ? a.getPublishedAt() : "");
+                        item.put("originalUrl", urlMap.getOrDefault(a.getRawId(), ""));
+                        item.put("summary", a.getSummary() != null ? a.getSummary() : "");
+                        item.put("contentPreview", previewText(a.getContent(), 1200));
                         return item;
                     })
                     .toList();
@@ -560,14 +727,14 @@ public class EventServiceImpl implements EventService {
                 if (kw == null || kw.isBlank()) continue;
                 for (String word : kw.split("[,，]")) {
                     String trimmed = word.trim();
-                    if (!trimmed.isEmpty() && trimmed.length() >= 2) {
+                    if (isMeaningfulKeyword(trimmed)) {
                         wordFreq.merge(trimmed, 1L, Long::sum);
                     }
                 }
             }
             topKeywords = wordFreq.entrySet().stream()
                     .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                    .limit(20)
+                    .limit(10)
                     .map(e -> {
                         Map<String, Object> item = new HashMap<>();
                         item.put("word", e.getKey());

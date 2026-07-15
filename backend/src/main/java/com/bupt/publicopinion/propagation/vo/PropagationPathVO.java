@@ -18,6 +18,7 @@ public record PropagationPathVO(
         String pathJson,
         List<PropagationNodeVO> nodes,
         List<Map<String, Object>> edges,
+        List<Map<String, Object>> phases,
         String method,
         LocalDateTime createTime
 ) {

@@ -72,7 +72,14 @@ VALUES
     ('新浪新闻', 'portal', 'https://news.sina.com.cn/', 1),
     ('中国新闻网', 'official', 'https://www.chinanews.com.cn/', 1),
     ('澎湃新闻', 'original', 'https://www.thepaper.cn/', 1),
-    ('界面新闻', 'original', 'https://www.jiemian.com/', 1)
+    ('界面新闻', 'original', 'https://www.jiemian.com/', 1),
+    ('中新网滚动新闻RSS', 'official', 'https://www.chinanews.com.cn/rss/scroll-news.xml', 1),
+    ('央视新闻', 'official', 'https://news.cctv.com/', 1),
+    ('新华网国际', 'official', 'https://www.news.cn/world/', 1),
+    ('新华网法治', 'official', 'https://www.news.cn/legal/', 1),
+    ('环球网', 'portal', 'https://www.huanqiu.com/', 1),
+    ('人民网国际', 'official', 'http://world.people.com.cn/', 1),
+    ('人民网社会', 'official', 'http://society.people.com.cn/', 1)
 ON DUPLICATE KEY UPDATE
     source_name = VALUES(source_name),
     source_type = VALUES(source_type),

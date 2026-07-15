@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 # 短文本阈值：清洗后正文字数少于此值的文章标记为噪音
 MIN_CONTENT_LENGTH = 20
 
+COPYRIGHT_NOISE_TERMS = [
+    "copyright",
+    "all rights reserved",
+    "版权所有",
+    "未经授权禁止转载",
+    "刊用本网站稿件",
+    "务经书面授权",
+    "建立镜像",
+    "chinanews.com",
+    "sina corporation",
+]
+
 ARTICLE_SUMMARY_SYSTEM_PROMPT = """你是一个专业的文本摘要助手。请将以下新闻正文压缩为一句话中文摘要（30-50字），直接概括核心事实即可。
 
 要求：
@@ -57,14 +69,18 @@ class CleanService:
         # 3. 去噪: 清洗特殊字符（URL/邮箱/手机号/emoji/控制字符）
         content = self._clean_special_chars(content)
 
+        is_boilerplate_noise = self._is_boilerplate_noise(content)
+
         # 4. 分词 & 关键词提取（使用停用词过滤）
-        keywords = self._extract_keywords(content, topk=10)
+        keywords = [] if is_boilerplate_noise else self._extract_keywords(content, topk=10)
 
         # 5. LLM 摘要生成，降级为取前三句
-        summary = self._generate_summary(content)
+        summary = "" if is_boilerplate_noise else (
+            self._extract_first_sentences(content) if request.mode == "fast" else self._generate_summary(content)
+        )
 
-        # 6. 短文本判定：正文过短标记为噪音
-        status = "NOISY" if self._is_short_text(content) else "CLEANED"
+        # 6. 噪声判定：正文过短或明显是版权/站点模板，不进入后续分析聚类
+        status = "NOISY" if self._is_short_text(content) or is_boilerplate_noise else "CLEANED"
 
         return CleanResponse(
             title=request.title,
@@ -199,6 +215,28 @@ class CleanService:
         # 统计中文字符数
         chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
         return chinese_chars < MIN_CONTENT_LENGTH
+
+    def _is_boilerplate_noise(self, text: str) -> bool:
+        """判断正文是否主要由版权声明、站点声明等模板噪声构成。"""
+        if not text:
+            return True
+
+        normalized = re.sub(r'\s+', ' ', text).strip().lower()
+        if not normalized:
+            return True
+
+        hit_count = sum(1 for term in COPYRIGHT_NOISE_TERMS if term in normalized)
+        if hit_count >= 2:
+            return True
+
+        # 中新网常见正文抽取失败结果：正文几乎只剩版权声明。
+        if "本网站所刊载信息" in text and "不代表中新社和中新网观点" in text:
+            return True
+
+        # 模板噪声通常新闻实体极少，版权/授权词占比极高。
+        content_chars = len(re.findall(r'[\u4e00-\u9fffA-Za-z0-9]', text))
+        boilerplate_chars = sum(len(term) for term in COPYRIGHT_NOISE_TERMS if term in normalized)
+        return content_chars > 0 and boilerplate_chars / content_chars > 0.25
 
     def _extract_keywords(self, text: str, topk: int = 10) -> list[str]:
         # TF-IDF 关键词提取（已通过 jieba.analyse.set_stop_words 配置停用词）

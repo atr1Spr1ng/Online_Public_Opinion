@@ -4,13 +4,16 @@ import com.bupt.publicopinion.common.vo.PageResult;
 import com.bupt.publicopinion.event.vo.EventDetailVO;
 import com.bupt.publicopinion.event.vo.EventVO;
 import com.bupt.publicopinion.event.vo.SimilarEventResult;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
 
 import java.util.List;
 import java.util.Map;
 
 public interface EventService {
 
-    Map<String, Object> clusterAndSave(double threshold);
+    Map<String, Object> clusterAndSave(double threshold, Integer days, Integer minClusterSize);
+
+    ProcessingTask clusterAsync(double threshold, Integer days, Integer minClusterSize);
 
     PageResult<EventVO> listEvents(long pageNum, long pageSize, String category, String sortBy, String sortOrder);
 

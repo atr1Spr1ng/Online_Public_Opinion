@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, status
 
-from adapter.social_media_adapter import SocialMediaAdapter
-from exception.crawler_exception import CrawlerException
-from model.social_hot_item import SocialHotResult
+from src.adapter.social_media_adapter import SocialMediaAdapter
+from src.exception.crawler_exception import CrawlerException
+from src.model.social_hot_item import SocialHotResult
 
 router = APIRouter(prefix="/internal/crawler/social", tags=["social crawler"])
 adapter = SocialMediaAdapter()

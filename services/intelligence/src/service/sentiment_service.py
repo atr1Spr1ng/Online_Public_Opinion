@@ -95,6 +95,7 @@ DEGREE_ADVERBS: dict[str, float] = {
 
 # 否定窗口大小（否定词影响范围内）
 NEGATION_WINDOW = 3
+LOW_CONFIDENCE_LLM_THRESHOLD = 0.45
 
 
 class SentimentService:
@@ -130,14 +131,39 @@ class SentimentService:
                 details="empty text"
             )
 
-        # 1. LLM 情感分析（主力）
-        llm_result = self._analyze_by_llm(text)
-        if llm_result is not None:
-            return llm_result
+        mode = (request.mode or "").lower()
 
-        # 2. 字典匹配（降级）
-        logger.info("Sentiment: LLM failed, falling back to dictionary")
+        # 自动模式：先快速字典判断，低置信度再调用 LLM 兜底。
+        if mode == "auto":
+            dictionary_result = self._analyze_by_dictionary(text)
+            if dictionary_result.confidence < LOW_CONFIDENCE_LLM_THRESHOLD:
+                llm_result = self._analyze_by_llm(text)
+                if llm_result is not None:
+                    llm_result.details = self._merge_details(
+                        llm_result.details,
+                        f"自动模式低置信度LLM兜底；字典置信度={dictionary_result.confidence:.4f}"
+                    )
+                    return llm_result
+                dictionary_result.details = self._merge_details(
+                    dictionary_result.details,
+                    f"自动模式低置信度，但LLM不可用，使用字典结果；置信度={dictionary_result.confidence:.4f}"
+                )
+            return dictionary_result
+
+        # 精准模式：LLM 情感分析优先，失败后降级字典。
+        if mode != "fast":
+            llm_result = self._analyze_by_llm(text)
+            if llm_result is not None:
+                return llm_result
+
+        # 快速模式 / 精准模式降级：字典匹配
+        logger.info("Sentiment: using dictionary mode")
         return self._analyze_by_dictionary(text)
+
+    def _merge_details(self, original: str, note: str) -> str:
+        if not original:
+            return note
+        return f"{original} | {note}"
 
     def _analyze_by_llm(self, text: str) -> SentimentResponse | None:
         """LLM 零样本情感分析，失败返回 None"""

@@ -15,15 +15,20 @@ import com.bupt.publicopinion.fake.exception.FakeDetectionException;
 import com.bupt.publicopinion.fake.mapper.ArticleFakeDetectionMapper;
 import com.bupt.publicopinion.fake.service.FakeDetectionService;
 import com.bupt.publicopinion.fake.vo.FakeDetectionResult;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
+import com.bupt.publicopinion.task.service.ProcessingTaskService;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class FakeDetectionServiceImpl implements FakeDetectionService {
@@ -32,21 +37,28 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
     private final ArticleCleanMapper articleCleanMapper;
     private final ArticleRawMapper articleRawMapper;
     private final PythonIntelligenceClient pythonIntelligenceClient;
+    private final ProcessingTaskService processingTaskService;
 
     public FakeDetectionServiceImpl(
             ArticleFakeDetectionMapper articleFakeDetectionMapper,
             ArticleCleanMapper articleCleanMapper,
             ArticleRawMapper articleRawMapper,
-            PythonIntelligenceClient pythonIntelligenceClient
+            PythonIntelligenceClient pythonIntelligenceClient,
+            ProcessingTaskService processingTaskService
     ) {
         this.articleFakeDetectionMapper = articleFakeDetectionMapper;
         this.articleCleanMapper = articleCleanMapper;
         this.articleRawMapper = articleRawMapper;
         this.pythonIntelligenceClient = pythonIntelligenceClient;
+        this.processingTaskService = processingTaskService;
     }
 
     @Override
     public FakeDetectionResult detect(FakeDetectionRequest request) {
+        return detectInternal(request, normalizeMode(request.mode(), 1));
+    }
+
+    private FakeDetectionResult detectInternal(FakeDetectionRequest request, String mode) {
         ArticleClean clean = articleCleanMapper.selectById(request.cleanId());
         if (clean == null) {
             throw new FakeDetectionException("清洗后的文章不存在: " + request.cleanId());
@@ -59,7 +71,7 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
         );
 
         PythonIntelligenceClient.FakeDetectionResult pythonResult =
-                pythonIntelligenceClient.detectFake(clean.getTitle(), clean.getContent());
+                pythonIntelligenceClient.detectFake(clean.getTitle(), clean.getContent(), mode);
 
         ArticleFakeDetection entity = saveResult(clean.getId(), pythonResult);
         String originalUrl = null;
@@ -71,34 +83,59 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
     }
 
     @Override
-    public List<FakeDetectionResult> batchDetect(List<Long> cleanIds) {
-        List<FakeDetectionResult> results = new ArrayList<>();
+    public ProcessingTask batchDetect(List<Long> cleanIds) {
+        return batchDetect(cleanIds, null);
+    }
+
+    @Override
+    public ProcessingTask batchDetect(List<Long> cleanIds, String mode) {
+        List<Long> ids = normalizeIds(cleanIds);
+        String resolvedMode = normalizeMode(mode, ids.size());
+        ProcessingTask task = processingTaskService.createTask("FAKE_DETECT", "CLEAN_ARTICLE", ids.size());
+        task.setMessage("检测模式：" + modeLabel(resolvedMode, ids.size()));
+        final UserContext.UserContextInfo ctx = UserContext.get();
+        processingTaskService.runAsync(task.getId(), ctx, taskId -> processBatchDetect(taskId, ids, resolvedMode));
+        return task;
+    }
+
+    private void processBatchDetect(Long taskId, List<Long> cleanIds, String mode) {
+        AtomicInteger success = new AtomicInteger(0);
+        AtomicInteger failed = new AtomicInteger(0);
+        AtomicReference<String> lastMessage = new AtomicReference<>("");
         final UserContext.UserContextInfo ctx = UserContext.get();
         Semaphore sem = new Semaphore(5);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
-
         for (Long cleanId : cleanIds) {
             futures.add(CompletableFuture.runAsync(() -> {
                 UserContext.set(ctx);
+                boolean acquired = false;
                 try {
                     sem.acquire();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                try {
-                    FakeDetectionResult r = detect(new FakeDetectionRequest(cleanId));
-                    synchronized (results) { results.add(r); }
+                    acquired = true;
+                    ArticleClean clean = articleCleanMapper.selectById(cleanId);
+                    detectInternal(new FakeDetectionRequest(cleanId, mode), mode);
+                    processingTaskService.recordItem(taskId, cleanId, "CLEAN_ARTICLE",
+                            clean != null ? clean.getTitle() : "文章 " + cleanId,
+                            "SUCCESS", "");
+                    int ok = success.incrementAndGet();
+                    lastMessage.set("已检测文章 " + cleanId + "；模式：" + modeLabel(mode, cleanIds.size()));
+                    processingTaskService.updateProgress(taskId, ok, failed.get(), lastMessage.get());
                 } catch (Exception e) {
-                    synchronized (results) { results.add(FakeDetectionResult.failed(cleanId, e.getMessage())); }
+                    int fail = failed.incrementAndGet();
+                    lastMessage.set("文章 " + cleanId + " 虚假检测失败: " + e.getMessage() + "；模式：" + modeLabel(mode, cleanIds.size()));
+                    processingTaskService.recordItem(taskId, cleanId, "CLEAN_ARTICLE",
+                            resolveCleanTitle(cleanId), "FAILED", e.getMessage());
+                    processingTaskService.updateProgress(taskId, success.get(), fail, lastMessage.get());
                 } finally {
-                    sem.release();
+                    if (acquired) sem.release();
                     UserContext.clear();
                 }
             }));
         }
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        return results;
+        processingTaskService.finish(taskId, success.get(), failed.get(),
+                (failed.get() > 0 ? "虚假检测完成，部分文章失败" : "虚假检测完成")
+                        + "；模式：" + modeLabel(mode, cleanIds.size()));
     }
 
     @Override
@@ -199,5 +236,32 @@ public class FakeDetectionServiceImpl implements FakeDetectionService {
                 title,
                 originalUrl
         );
+    }
+
+    private List<Long> normalizeIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return new ArrayList<>(new LinkedHashSet<>(ids.stream()
+                .filter(id -> id != null && id > 0)
+                .toList()));
+    }
+
+    private String resolveCleanTitle(Long cleanId) {
+        ArticleClean clean = articleCleanMapper.selectById(cleanId);
+        if (clean == null) return "文章 " + cleanId;
+        return clean.getTitle() != null && !clean.getTitle().isBlank() ? clean.getTitle() : "文章 " + cleanId;
+    }
+
+    private String normalizeMode(String mode, int count) {
+        if ("fast".equalsIgnoreCase(mode)) return "fast";
+        if ("accurate".equalsIgnoreCase(mode) || "llm".equalsIgnoreCase(mode)) return "accurate";
+        if ("auto".equalsIgnoreCase(mode) || mode == null || mode.isBlank()) {
+            return count > 0 && count <= 50 ? "accurate" : "auto";
+        }
+        return "fast";
+    }
+
+    private String modeLabel(String mode, int count) {
+        if ("accurate".equals(mode)) return "精准模式";
+        return "快速模式";
     }
 }

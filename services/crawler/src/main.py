@@ -3,8 +3,8 @@ load_dotenv()
 
 from fastapi import FastAPI
 
-from api.news_api import router as news_router
-from api.social_media_api import router as social_router
+from src.api.news_api import router as news_router
+from src.api.social_media_api import router as social_router
 
 app = FastAPI(
     title="Crawler Gateway",

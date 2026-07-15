@@ -52,8 +52,12 @@ export function discoverNews(data) {
   return request({ url: '/crawler/news/discover', method: 'post', data })
 }
 
-export function searchByTopic(data) {
-  return request({ url: '/crawler/topics/search', method: 'post', data })
+export function createTopicSearchTask(data) {
+  return request({ url: '/crawler/topics/search/tasks', method: 'post', data })
+}
+
+export function createHotTopicTask(data) {
+  return request({ url: '/crawler/topics/tasks', method: 'post', data })
 }
 
 export function deleteArticle(id) {

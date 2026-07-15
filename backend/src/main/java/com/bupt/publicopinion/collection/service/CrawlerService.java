@@ -53,6 +53,10 @@ public interface CrawlerService {
 
     BatchTopicResult searchAndCollectByTopic(TopicSearchRequest request);
 
+    CrawlerTaskSaveResult createTopicSearchCrawlTask(TopicSearchRequest request);
+
+    CrawlerTaskSaveResult createHotTopicCrawlTask(TopicSearchRequest request);
+
     SocialHotResult fetchSocialHot(String platform);
 
     void deleteArticle(Long id);

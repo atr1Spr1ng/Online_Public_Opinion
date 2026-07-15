@@ -6,6 +6,8 @@ import com.bupt.publicopinion.analysis.service.AnalysisService;
 import com.bupt.publicopinion.analysis.vo.SentimentResult;
 import com.bupt.publicopinion.common.result.ApiResult;
 import com.bupt.publicopinion.common.vo.PageResult;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/analysis")
@@ -39,8 +42,8 @@ public class AnalysisController {
     }
 
     @PostMapping("/batch-sentiment")
-    public ApiResult<List<SentimentResult>> batchAnalyze(@RequestBody List<Long> cleanIds) {
-        return ApiResult.success(analysisService.batchAnalyze(cleanIds));
+    public ApiResult<ProcessingTask> batchAnalyze(@RequestBody JsonNode body) {
+        return ApiResult.success(analysisService.batchAnalyze(parseCleanIds(body), parseMode(body)));
     }
 
     @GetMapping("/sentiment/{id}")
@@ -61,5 +64,23 @@ public class AnalysisController {
     public ApiResult<Void> deleteSentimentResult(@PathVariable Long id) {
         analysisService.deleteSentimentResult(id);
         return ApiResult.success();
+    }
+
+    private List<Long> parseCleanIds(JsonNode body) {
+        JsonNode idsNode = body != null && body.isObject() ? body.get("cleanIds") : body;
+        List<Long> ids = new ArrayList<>();
+        if (idsNode != null && idsNode.isArray()) {
+            idsNode.forEach(node -> {
+                if (node.canConvertToLong()) ids.add(node.asLong());
+            });
+        }
+        return ids;
+    }
+
+    private String parseMode(JsonNode body) {
+        if (body != null && body.isObject() && body.hasNonNull("mode")) {
+            return body.get("mode").asText();
+        }
+        return null;
     }
 }

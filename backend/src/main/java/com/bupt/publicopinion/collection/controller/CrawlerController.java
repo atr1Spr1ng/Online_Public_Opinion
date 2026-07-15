@@ -98,8 +98,8 @@ public class CrawlerController {
     }
 
     @GetMapping("/tasks/{taskId}")
-    public CrawlTaskDetailResult getCrawlTaskDetail(@PathVariable Long taskId) {
-        return crawlerService.getCrawlTaskDetail(taskId);
+    public ApiResult<CrawlTaskDetailResult> getCrawlTaskDetail(@PathVariable Long taskId) {
+        return ApiResult.success(crawlerService.getCrawlTaskDetail(taskId));
     }
 
     @GetMapping("/articles")
@@ -161,6 +161,16 @@ public class CrawlerController {
     public ApiResult<BatchTopicResult> searchAndCollectByTopic(@Valid @RequestBody TopicSearchRequest request) {
         BatchTopicResult result = crawlerService.searchAndCollectByTopic(request);
         return ApiResult.success(result);
+    }
+
+    @PostMapping("/topics/search/tasks")
+    public ApiResult<CrawlerTaskSaveResult> createTopicSearchCrawlTask(@Valid @RequestBody TopicSearchRequest request) {
+        return ApiResult.success(crawlerService.createTopicSearchCrawlTask(request));
+    }
+
+    @PostMapping("/topics/tasks")
+    public ApiResult<CrawlerTaskSaveResult> createHotTopicCrawlTask(@Valid @RequestBody TopicSearchRequest request) {
+        return ApiResult.success(crawlerService.createHotTopicCrawlTask(request));
     }
 
     @GetMapping("/social/{platform}/hot")

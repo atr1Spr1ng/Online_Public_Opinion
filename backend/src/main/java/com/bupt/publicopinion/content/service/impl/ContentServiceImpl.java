@@ -18,12 +18,17 @@ import com.bupt.publicopinion.content.vo.CleanResult;
 import com.bupt.publicopinion.fake.entity.ArticleFakeDetection;
 import com.bupt.publicopinion.fake.mapper.ArticleFakeDetectionMapper;
 import com.bupt.publicopinion.search.service.SearchSyncService;
+import com.bupt.publicopinion.task.entity.ProcessingTask;
+import com.bupt.publicopinion.task.service.ProcessingTaskService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class ContentServiceImpl implements ContentService {
@@ -34,6 +39,7 @@ public class ContentServiceImpl implements ContentService {
     private final ArticleFakeDetectionMapper articleFakeDetectionMapper;
     private final PythonContentClient pythonContentClient;
     private final SearchSyncService searchSyncService;
+    private final ProcessingTaskService processingTaskService;
 
     public ContentServiceImpl(
             ArticleCleanMapper articleCleanMapper,
@@ -41,7 +47,8 @@ public class ContentServiceImpl implements ContentService {
             ArticleSentimentMapper articleSentimentMapper,
             ArticleFakeDetectionMapper articleFakeDetectionMapper,
             PythonContentClient pythonContentClient,
-            SearchSyncService searchSyncService
+            SearchSyncService searchSyncService,
+            ProcessingTaskService processingTaskService
     ) {
         this.articleCleanMapper = articleCleanMapper;
         this.articleRawMapper = articleRawMapper;
@@ -49,49 +56,71 @@ public class ContentServiceImpl implements ContentService {
         this.articleFakeDetectionMapper = articleFakeDetectionMapper;
         this.pythonContentClient = pythonContentClient;
         this.searchSyncService = searchSyncService;
+        this.processingTaskService = processingTaskService;
     }
 
     @Override
     public CleanResult cleanArticle(CleanRequest request) {
+        return cleanArticleInternal(request, null);
+    }
+
+    private CleanResult cleanArticleInternal(CleanRequest request, String mode) {
         ArticleRaw raw = articleRawMapper.selectById(request.rawId());
         if (raw == null) {
             throw new ContentServiceException("原始文章不存在: " + request.rawId());
         }
 
-        CleanResult result = pythonContentClient.clean(raw);
+        CleanResult result = pythonContentClient.clean(raw, mode);
         saveCleanResult(raw, result);
         return result;
     }
 
     @Override
-    public List<CleanResult> batchClean(List<Long> rawIds) {
-        List<CleanResult> results = new ArrayList<>();
+    public ProcessingTask batchClean(List<Long> rawIds) {
+        List<Long> ids = normalizeIds(rawIds);
+        ProcessingTask task = processingTaskService.createTask("CLEAN", "RAW_ARTICLE", ids.size());
+        final UserContext.UserContextInfo ctx = UserContext.get();
+        processingTaskService.runAsync(task.getId(), ctx, taskId -> processBatchClean(taskId, ids));
+        return task;
+    }
+
+    private void processBatchClean(Long taskId, List<Long> rawIds) {
+        AtomicInteger success = new AtomicInteger(0);
+        AtomicInteger failed = new AtomicInteger(0);
+        AtomicReference<String> lastMessage = new AtomicReference<>("");
         final UserContext.UserContextInfo ctx = UserContext.get();
         Semaphore sem = new Semaphore(5);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
-
         for (Long rawId : rawIds) {
             futures.add(CompletableFuture.runAsync(() -> {
                 UserContext.set(ctx);
+                boolean acquired = false;
                 try {
                     sem.acquire();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                try {
-                    CleanResult r = cleanArticle(new CleanRequest(rawId));
-                    synchronized (results) { results.add(r); }
+                    acquired = true;
+                    ArticleRaw raw = articleRawMapper.selectById(rawId);
+                    cleanArticleInternal(new CleanRequest(rawId), "fast");
+                    processingTaskService.recordItem(taskId, rawId, "RAW_ARTICLE",
+                            raw != null ? raw.getTitle() : "原始文章 " + rawId,
+                            "SUCCESS", "");
+                    int ok = success.incrementAndGet();
+                    lastMessage.set("已清洗原始文章 " + rawId);
+                    processingTaskService.updateProgress(taskId, ok, failed.get(), lastMessage.get());
                 } catch (Exception e) {
-                    synchronized (results) { results.add(CleanResult.failed(rawId, e.getMessage())); }
+                    int fail = failed.incrementAndGet();
+                    lastMessage.set("原始文章 " + rawId + " 清洗失败: " + e.getMessage());
+                    processingTaskService.recordItem(taskId, rawId, "RAW_ARTICLE",
+                            resolveRawTitle(rawId), "FAILED", e.getMessage());
+                    processingTaskService.updateProgress(taskId, success.get(), fail, lastMessage.get());
                 } finally {
-                    sem.release();
+                    if (acquired) sem.release();
                     UserContext.clear();
                 }
             }));
         }
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        return results;
+        processingTaskService.finish(taskId, success.get(), failed.get(),
+                failed.get() > 0 ? "清洗完成，部分文章失败" : "清洗完成");
     }
 
     @Override
@@ -149,6 +178,19 @@ public class ContentServiceImpl implements ContentService {
         articleCleanMapper.insert(clean);
     }
 
+    private List<Long> normalizeIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return new ArrayList<>(new LinkedHashSet<>(ids.stream()
+                .filter(id -> id != null && id > 0)
+                .toList()));
+    }
+
+    private String resolveRawTitle(Long rawId) {
+        ArticleRaw raw = articleRawMapper.selectById(rawId);
+        if (raw == null) return "原始文章 " + rawId;
+        return raw.getTitle() != null && !raw.getTitle().isBlank() ? raw.getTitle() : "原始文章 " + rawId;
+    }
+
     @Override
     public void deleteCleanedArticle(Long id) {
         ArticleClean article = articleCleanMapper.selectById(id);
@@ -161,5 +203,6 @@ public class ContentServiceImpl implements ContentService {
         articleFakeDetectionMapper.delete(
                 new LambdaQueryWrapper<ArticleFakeDetection>().eq(ArticleFakeDetection::getCleanId, id));
         articleCleanMapper.deleteById(id);
+        searchSyncService.deleteArticle(id);
     }
 }

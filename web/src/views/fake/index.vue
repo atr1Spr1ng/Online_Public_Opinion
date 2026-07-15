@@ -5,13 +5,21 @@
       <template #header>
         <div class="card-header">
           <span>待检测已清洗文章</span>
-          <div>
-            <el-button type="primary" @click="batchDetect" :disabled="!selectedCleanIds.length">
-              检测选中 ({{ selectedCleanIds.length }})
-            </el-button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-select v-model="detectMode" style="width:150px">
+              <el-option label="自动模式" value="auto" />
+              <el-option label="快速模式" value="fast" />
+              <el-option label="精准模式" value="accurate" />
+            </el-select>
+            <el-button type="primary" @click="batchDetect" :disabled="!hasCleanSelection">检测选中</el-button>
           </div>
         </div>
       </template>
+      <div class="selection-toolbar">
+        <el-checkbox v-model="selectAllClean">
+          选择全部待检测文章（共 {{ cleanTotal }} 篇）
+        </el-checkbox>
+      </div>
       <el-table
         :data="cleanArticles" v-loading="cleanLoading" border stripe
         @selection-change="val => selectedCleanIds = val.map(i => i.id)"
@@ -41,15 +49,20 @@
         <div class="card-header">
           <span>已有检测结果</span>
           <div style="display:flex;gap:8px">
-            <el-button type="primary" @click="batchRedetect" :disabled="!selectedResultRows.length">
-              批量重新检测 ({{ selectedResultRows.length }})
+            <el-button type="primary" @click="batchRedetect" :disabled="!hasResultSelection">
+              重新检测选中
             </el-button>
-            <el-button type="danger" @click="batchDeleteResults" :disabled="!selectedResultRows.length">
-              批量删除 ({{ selectedResultRows.length }})
+            <el-button type="danger" @click="batchDeleteResults" :disabled="!hasResultSelection">
+              删除选中
             </el-button>
           </div>
         </div>
       </template>
+      <div class="selection-toolbar">
+        <el-checkbox v-model="selectAllResults">
+          选择全部检测结果（共 {{ resultTotal }} 条）
+        </el-checkbox>
+      </div>
       <el-table
         :data="resultData" v-loading="resultLoading" border stripe
         @selection-change="val => selectedResultRows = val"
@@ -107,10 +120,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { getCleanArticles } from '@/api/content'
-import { getFakeResults, batchDetectFake, deleteFakeResult } from '@/api/fake'
-import { ElMessage } from 'element-plus'
+import { getFakeResults, detectFake, batchDetectFake, deleteFakeResult } from '@/api/fake'
+import { fetchAllPaged } from '@/utils/pagedFetch'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 // ---- 待检测已清洗文章 ----
 const cleanLoading = ref(false)
@@ -118,6 +132,9 @@ const cleanArticles = ref([])
 const cleanTotal = ref(0)
 const cleanPage = reactive({ pageNum: 1, pageSize: 10 })
 const selectedCleanIds = ref([])
+const selectAllClean = ref(false)
+const detectMode = ref('auto')
+const hasCleanSelection = computed(() => selectAllClean.value || selectedCleanIds.value.length > 0)
 
 async function fetchCleanArticles() {
   cleanLoading.value = true
@@ -135,6 +152,8 @@ const resultData = ref([])
 const resultTotal = ref(0)
 const resultPage = reactive({ pageNum: 1, pageSize: 10 })
 const selectedResultRows = ref([])
+const selectAllResults = ref(false)
+const hasResultSelection = computed(() => selectAllResults.value || selectedResultRows.value.length > 0)
 
 // ---- 详情弹窗 ----
 const detailVisible = ref(false)
@@ -160,7 +179,7 @@ async function fetchResults() {
 // ---- 检测操作 ----
 async function detectOne(row) {
   try {
-    await batchDetectFake([row.id])
+    await detectFake({ cleanId: row.id, mode: detectMode.value })
     ElMessage.success(`「${row.title || row.id}」检测完成`)
     fetchCleanArticles()
     fetchResults()
@@ -168,38 +187,54 @@ async function detectOne(row) {
 }
 
 async function batchDetect() {
+  const ids = selectAllClean.value
+    ? (await fetchAllPaged(getCleanArticles, { excludeDetected: true })).map(i => i.id)
+    : [...selectedCleanIds.value]
+  if (!ids.length) return
   try {
-    await batchDetectFake(selectedCleanIds.value)
-    ElMessage.success(`批量检测 ${selectedCleanIds.value.length} 篇文章完成`)
+    const res = await batchDetectFake(ids, detectMode.value)
+    const taskId = res.data?.id || res.id
+    ElMessage.success(taskId ? `后台虚假检测任务已提交：#${taskId}（${modeLabel(detectMode.value, ids.length)}）` : `后台虚假检测任务已提交，共 ${ids.length} 篇`)
     selectedCleanIds.value = []
+    selectAllClean.value = false
     fetchCleanArticles()
     fetchResults()
   } catch {}
 }
 
 async function batchRedetect() {
-  const ids = selectedResultRows.value.map(r => r.cleanId)
+  const ids = selectAllResults.value
+    ? (await fetchAllPaged(getFakeResults)).map(r => r.cleanId).filter(Boolean)
+    : selectedResultRows.value.map(r => r.cleanId)
   if (!ids.length) return
   try {
-    await batchDetectFake(ids)
-    ElMessage.success(`重新检测 ${ids.length} 篇文章完成`)
+    const res = await batchDetectFake(ids, detectMode.value)
+    const taskId = res.data?.id || res.id
+    ElMessage.success(taskId ? `后台重新检测任务已提交：#${taskId}（${modeLabel(detectMode.value, ids.length)}）` : `后台重新检测任务已提交，共 ${ids.length} 篇`)
     selectedResultRows.value = []
+    selectAllResults.value = false
     fetchResults()
   } catch {}
 }
 
 async function batchDeleteResults() {
-  const rows = [...selectedResultRows.value]
-  if (!rows.length) return
+  const ids = selectAllResults.value
+    ? (await fetchAllPaged(getFakeResults)).map(r => r.id)
+    : selectedResultRows.value.map(r => r.id)
+  if (!ids.length) return
   try {
-    for (const row of rows) {
-      await deleteFakeResult(row.id)
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 条检测结果？`, '删除确认', { type: 'warning' })
+    for (const id of ids) {
+      await deleteFakeResult(id)
     }
-    ElMessage.success(`批量删除 ${rows.length} 条检测结果完成`)
+    ElMessage.success(`已删除 ${ids.length} 条检测结果`)
     selectedResultRows.value = []
+    selectAllResults.value = false
     fetchCleanArticles()
     fetchResults()
-  } catch {}
+  } catch (e) {
+    if (e !== 'cancel') {}
+  }
 }
 
 async function handleDeleteResult(row) {
@@ -211,6 +246,12 @@ async function handleDeleteResult(row) {
   } catch {}
 }
 
+function modeLabel(mode, count) {
+  if (mode === 'fast') return '快速模式'
+  if (mode === 'accurate') return '精准模式'
+  return count <= 50 ? '精准模式' : '快速模式'
+}
+
 onMounted(() => {
   fetchCleanArticles()
   fetchResults()
@@ -219,4 +260,8 @@ onMounted(() => {
 
 <style scoped>
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.selection-toolbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px; color: #606266; font-size: 13px;
+}
 </style>

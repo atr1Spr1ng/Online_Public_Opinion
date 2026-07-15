@@ -26,10 +26,15 @@ public class PythonIntelligenceClient {
     }
 
     public SentimentResult analyzeSentiment(String title, String content) {
+        return analyzeSentiment(title, content, null);
+    }
+
+    public SentimentResult analyzeSentiment(String title, String content, String mode) {
         Map<String, String> body = Map.of(
                 "title", title != null ? title : "",
                 "content", content != null ? content : "",
-                "language", "zh"
+                "language", "zh",
+                "mode", mode != null ? mode : ""
         );
 
         try {
@@ -60,10 +65,15 @@ public class PythonIntelligenceClient {
 
     @SuppressWarnings("unchecked")
     public FakeDetectionResult detectFake(String title, String content) {
+        return detectFake(title, content, null);
+    }
+
+    public FakeDetectionResult detectFake(String title, String content, String mode) {
         Map<String, String> body = Map.of(
                 "title", title != null ? title : "",
                 "content", content != null ? content : "",
-                "language", "zh"
+                "language", "zh",
+                "mode", mode != null ? mode : ""
         );
 
         try {
@@ -127,10 +137,11 @@ public class PythonIntelligenceClient {
             String details
     ) {}
     @SuppressWarnings("unchecked")
-    public ClusterResult clusterEvents(List<Map<String, Object>> articles, double threshold) {
+    public ClusterResult clusterEvents(List<Map<String, Object>> articles, double threshold, int minClusterSize) {
         Map<String, Object> body = Map.of(
                 "articles", articles,
-                "threshold", threshold
+                "threshold", threshold,
+                "min_cluster_size", minClusterSize
         );
 
         try {
@@ -153,6 +164,7 @@ public class PythonIntelligenceClient {
             if (events != null) {
                 for (Map<String, Object> e : events) {
                     items.add(new EventClusterItem(
+                            toLong(e.get("event_id")),
                             safeString(e.get("title"), "未命名事件"),
                             safeStringList(e.get("keywords")),
                             toLongList(e.get("article_ids")),
@@ -160,7 +172,8 @@ public class PythonIntelligenceClient {
                             toDouble(e.get("hotness")),
                             safeString(e.get("lifecycle"), "潜伏期"),
                             safeString(e.get("start_time"), ""),
-                            safeString(e.get("end_time"), "")
+                            safeString(e.get("end_time"), ""),
+                            false
                     ));
                 }
             }
@@ -172,6 +185,11 @@ public class PythonIntelligenceClient {
         } catch (RestClientException e) {
             throw new IntelligenceServiceException("调用 Python 事件聚类服务失败", e);
         }
+    }
+
+    private long toLong(Object value) {
+        if (value instanceof Number num) return num.longValue();
+        return 0L;
     }
 
     private int toInt(Object value) {
@@ -206,6 +224,7 @@ public class PythonIntelligenceClient {
     }
 
     public record EventClusterItem(
+            long eventId,
             String title,
             List<String> keywords,
             List<Long> articleIds,
@@ -213,7 +232,15 @@ public class PythonIntelligenceClient {
             double hotness,
             String lifecycle,
             String startTime,
-            String endTime
+            String endTime,
+            boolean isExisting
+    ) {}
+
+    public record ExistingEventInfo(
+            long eventId,
+            String title,
+            List<String> keywords,
+            List<Long> articleIds
     ) {}
 
     public record ClusterResult(
@@ -222,6 +249,69 @@ public class PythonIntelligenceClient {
             int clusteredArticles,
             int unclusteredArticles
     ) {}
+
+    @SuppressWarnings("unchecked")
+    public ClusterResult incrementalClusterEvents(List<Map<String, Object>> articles,
+                                                   List<ExistingEventInfo> existingEvents,
+                                                   double threshold,
+                                                   double matchThreshold,
+                                                   int minClusterSize) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("articles", articles);
+        body.put("existing_events", existingEvents.stream().map(ev -> {
+            Map<String, Object> m = new HashMap<>();
+            m.put("event_id", ev.eventId());
+            m.put("title", ev.title());
+            m.put("keywords", ev.keywords());
+            m.put("article_ids", ev.articleIds());
+            return m;
+        }).toList());
+        body.put("threshold", threshold);
+        body.put("match_threshold", matchThreshold);
+        body.put("min_cluster_size", minClusterSize);
+
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/event/incremental-cluster")
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                throw new IntelligenceServiceException("Python 增量聚类服务返回空响应");
+            }
+
+            int totalArticles = toInt(result.get("total_articles"));
+            int clusteredArticles = toInt(result.get("clustered_articles"));
+            int unclusteredArticles = toInt(result.get("unclustered_articles"));
+
+            List<Map<String, Object>> events = (List<Map<String, Object>>) result.get("events");
+            List<EventClusterItem> items = new ArrayList<>();
+            if (events != null) {
+                for (Map<String, Object> e : events) {
+                    items.add(new EventClusterItem(
+                            toLong(e.get("event_id")),
+                            safeString(e.get("title"), "未命名事件"),
+                            safeStringList(e.get("keywords")),
+                            toLongList(e.get("article_ids")),
+                            toInt(e.get("article_count")),
+                            toDouble(e.get("hotness")),
+                            safeString(e.get("lifecycle"), "潜伏期"),
+                            safeString(e.get("start_time"), ""),
+                            safeString(e.get("end_time"), ""),
+                            Boolean.TRUE.equals(e.get("is_existing"))
+                    ));
+                }
+            }
+
+            return new ClusterResult(items, totalArticles, clusteredArticles, unclusteredArticles);
+
+        } catch (IntelligenceServiceException e) {
+            throw e;
+        } catch (RestClientException e) {
+            throw new IntelligenceServiceException("调用 Python 增量聚类服务失败", e);
+        }
+    }
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> classifyTopics(List<Map<String, Object>> events) {
@@ -358,6 +448,42 @@ public class PythonIntelligenceClient {
         if (value instanceof Number num) return num.intValue();
         return defaultValue;
     }
+
+    /**
+     * 语义重排序：调用 Python M3E 计算 query 与候选事件的余弦相似度
+     * @return 按语义分降序排列的 {id, score} 列表
+     */
+    @SuppressWarnings("unchecked")
+    public List<SemanticRankHit> semanticRank(String query, List<Map<String, Object>> candidates) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("query", query);
+        body.put("candidates", candidates);
+
+        try {
+            Map<?, ?> result = intelligenceRestClient.post()
+                    .uri("/internal/search/semantic-rank")
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (result == null) {
+                return List.of();
+            }
+
+            List<Map<String, Object>> results = (List<Map<String, Object>>) result.get("results");
+            if (results == null) return List.of();
+
+            return results.stream()
+                    .map(r -> new SemanticRankHit(toLong(r.get("id")), toDouble(r.get("score"))))
+                    .toList();
+
+        } catch (RestClientException e) {
+            // 语义排序不可用时静默降级，调用方回退到 BM25 原始排序
+            return List.of();
+        }
+    }
+
+    public record SemanticRankHit(long id, double score) {}
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> getEventSummary(Map<String, Object> eventData) {

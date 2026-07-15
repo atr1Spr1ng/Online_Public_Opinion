@@ -14,9 +14,9 @@ from urllib.parse import quote, urljoin, urlparse, urlunparse
 import httpx
 from bs4 import BeautifulSoup
 
-from config.settings import CrawlerSettings, settings
-from exception.crawler_exception import CrawlerException
-from model.news_discover_result import DiscoveredNewsLink
+from src.config.settings import CrawlerSettings, settings
+from src.exception.crawler_exception import CrawlerException
+from src.model.news_discover_result import DiscoveredNewsLink
 
 
 @dataclass(frozen=True)

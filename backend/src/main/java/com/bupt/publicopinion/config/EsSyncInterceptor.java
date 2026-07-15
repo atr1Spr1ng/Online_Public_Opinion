@@ -57,9 +57,7 @@ public class EsSyncInterceptor implements Interceptor {
     private void syncEvent(SqlCommandType type, Event event, Object result) {
         switch (type) {
             case INSERT, UPDATE -> searchSyncService.indexEvent(event);
-            case DELETE -> {
-                // Individual event deletion uses delete-by-id in ES
-            }
+            case DELETE -> searchSyncService.deleteEvent(event.getId());
         }
     }
 }

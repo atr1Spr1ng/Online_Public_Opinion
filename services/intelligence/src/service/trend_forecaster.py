@@ -7,7 +7,7 @@ from prophet import Prophet
 class TrendForecaster:
     """单事件热度趋势预测，Prophet + 移动平均降级"""
 
-    MIN_POINTS_FOR_PROPHET = 14  # 最少数据点数才启用 Prophet
+    MIN_POINTS_FOR_PROPHET = 7  # 数据点足够时才启用 Prophet；少量数据使用移动平均参考
 
     def forecast(self, daily_counts: list[dict], periods: int = 7) -> dict:
         """
@@ -36,9 +36,10 @@ class TrendForecaster:
                 # Prophet 训练失败时降级到移动平均
                 return self._moving_avg_forecast(daily_counts, periods, f"Prophet失败({e})")
         else:
+            short_periods = min(periods, 3)
             return self._moving_avg_forecast(
-                daily_counts, periods,
-                f"数据点不足({n}<{self.MIN_POINTS_FOR_PROPHET})"
+                daily_counts, short_periods,
+                f"历史数据点较少({n}天)，不做长期趋势预测，仅提供未来{short_periods}天短期参考"
             )
 
     def _prophet_forecast(self, daily_counts: list[dict], periods: int) -> dict:

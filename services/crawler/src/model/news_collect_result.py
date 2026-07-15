@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from model.crawl_result import CrawlResult
+from src.model.crawl_result import CrawlResult
 
 
 class FailedNewsCrawl(BaseModel):

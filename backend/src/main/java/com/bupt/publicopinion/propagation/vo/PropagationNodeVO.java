@@ -14,6 +14,11 @@ public record PropagationNodeVO(
         Boolean isInfluencer,
         String nodeType,
         Boolean isHistorical,
+        String phase,
+        Integer phaseIndex,
+        String role,
+        String reason,
+        Boolean representative,
         LocalDateTime createTime
 ) {
 }

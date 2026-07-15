@@ -33,7 +33,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="articleCount" label="文章数" width="80" />
-        <el-table-column prop="hotness" label="热度" width="80" sortable="custom" />
+        <el-table-column prop="hotness" label="热度" width="80" sortable="custom" :sort-orders="['ascending', 'descending']" />
         <el-table-column label="情感" width="150">
           <template #default="{ row }">
             <template v-if="row.sentimentPositive != null">
@@ -51,7 +51,7 @@
             <el-tag :type="lifecycleType(row.lifecycle)">{{ row.lifecycle }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="startTime" label="开始时间" width="170" sortable="custom" />
+        <el-table-column prop="startTime" label="开始时间" width="170" sortable="custom" :sort-orders="['ascending', 'descending']" />
         <el-table-column label="操作" width="330">
           <template #default="{ row }">
             <el-button type="info" link @click="goDetail(row)">详情</el-button>
@@ -85,8 +85,19 @@
         <el-form-item label="相似度阈值">
           <el-slider v-model="threshold" :min="0.05" :max="0.95" :step="0.05" show-input />
         </el-form-item>
+        <el-form-item label="时间范围">
+          <el-select v-model="clusterDays" style="width:180px">
+            <el-option label="最近 7 天" :value="7" />
+            <el-option label="最近 30 天" :value="30" />
+            <el-option label="最近 90 天" :value="90" />
+            <el-option label="全部历史" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="最小成簇">
+          <el-input-number v-model="minClusterSize" :min="2" :max="20" :step="1" style="width:180px" />
+        </el-form-item>
         <el-form-item label="说明">
-          <span style="color:#909399;font-size:13px">阈值越低，事件归类越宽松；阈值越高，归类越严格。</span>
+          <span style="color:#909399;font-size:13px">低于最小成簇文章数的簇将计入未成簇，不生成事件。</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -171,26 +182,6 @@
       </div>
     </el-dialog>
 
-    <!-- 聚类结果弹窗 -->
-    <el-dialog v-model="clusterResultVisible" title="聚类分析结果" width="480px">
-      <el-descriptions :column="1" border>
-        <el-descriptions-item label="输入文章数">{{ clusterResult?.totalArticles || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="聚类成功">
-          <span style="color:#67C23A;font-weight:bold">{{ clusterResult?.clusteredArticles || 0 }}</span>
-          <span style="color:#909399;margin-left:4px">篇（{{ clusterResult?.totalArticles ? (clusterResult.clusteredArticles / clusterResult.totalArticles * 100).toFixed(1) : 0 }}%）</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="噪点文章">
-          <span :style="{color: noiseRate > 40 ? '#F56C6C' : noiseRate > 20 ? '#E6A23C' : '#67C23A', fontWeight:'bold'}">{{ clusterResult?.unclusteredArticles || 0 }}</span>
-          <span style="color:#909399;margin-left:4px">篇（噪点率 {{ noiseRate.toFixed(1) }}%）</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="生成事件数">
-          <el-tag type="primary">{{ clusterResult?.events?.length || 0 }}</el-tag>
-        </el-descriptions-item>
-      </el-descriptions>
-      <template #footer>
-        <el-button type="primary" @click="clusterResultVisible = false">确定</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -216,13 +207,9 @@ const sortOrder = ref('desc')
 
 const clustering = ref(false)
 const clusterVisible = ref(false)
-const clusterResultVisible = ref(false)
-const clusterResult = ref(null)
-const noiseRate = computed(() => {
-  if (!clusterResult.value || !clusterResult.value.totalArticles) return 0
-  return clusterResult.value.unclusteredArticles / clusterResult.value.totalArticles * 100
-})
 const threshold = ref(0.25)
+const clusterDays = ref(30)
+const minClusterSize = ref(3)
 
 const filterCategory = ref('')
 const categories = ['社会民生', '科技经济', '教育文化', '医疗卫生', '政治法律', '生态环境', '娱乐体育', '国际时政', '其他']
@@ -292,21 +279,24 @@ function goDetail(row) {
 
 function showClusterDialog() {
   threshold.value = 0.25
+  clusterDays.value = 30
+  minClusterSize.value = 3
   clusterVisible.value = true
 }
 
 async function doCluster() {
   clustering.value = true
   try {
-    const res = await clusterEvents({ threshold: threshold.value })
-    if (res.code === 200 && res.data?.success) {
-      const data = res.data
-      clusterResult.value = data
+    const res = await clusterEvents({
+      threshold: threshold.value,
+      days: clusterDays.value,
+      minClusterSize: minClusterSize.value
+    })
+    if (res.code === 200 && res.data?.id) {
       clusterVisible.value = false
-      clusterResultVisible.value = true
-      await fetchData()
+      ElMessage.success(`后台事件聚类任务已提交：#${res.data.id}`)
     } else {
-      ElMessage.error(res.data?.message || '聚类失败')
+      ElMessage.error(res.data?.message || '聚类任务提交失败')
     }
   } catch (e) {
     // error already toasted by global interceptor
@@ -348,8 +338,12 @@ function renderPathGraph() {
   }
 
   const nodes = pathResult.value.nodes.map(n => ({
-    id: n.cleanId,
+    id: String(n.cleanId),
     name: n.articleTitle || `文章#${n.cleanId}`,
+    sourceName: n.sourceName,
+    nodeType: n.nodeType,
+    isSource: n.isSource,
+    isInfluencer: n.isInfluencer,
     symbolSize: n.isSource ? 44 : n.isInfluencer ? 36 : Math.max(18, 32 - (n.depth || 0) * 3),
     symbol: n.isInfluencer ? 'diamond' : 'circle',
     itemStyle: { color: nodeColor(n), borderColor: n.isInfluencer ? '#333' : 'transparent', borderWidth: n.isInfluencer ? 2 : 0 },
@@ -377,7 +371,7 @@ function renderPathGraph() {
   pathChart.setOption({
     tooltip: { formatter: p => {
       if (p.dataType === 'node') {
-        const n = pathResult.value.nodes.find(x => x.cleanId == p.id) || {}
+        const n = p.data || {}
         const tags = [n.isSource && '源头', n.isInfluencer && '关键节点', typeName[n.nodeType]].filter(Boolean).join(' | ')
         return `${p.name}<br/>来源: ${n.sourceName || '未知'}<br/>${tags}`
       }

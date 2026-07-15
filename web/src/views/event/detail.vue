@@ -111,6 +111,13 @@
           <el-table-column prop="title" label="标题" min-width="300" show-overflow-tooltip />
           <el-table-column prop="sourceName" label="来源" width="120" />
           <el-table-column prop="publishedAt" label="发布时间" width="170" />
+          <el-table-column label="操作" width="130" fixed="right">
+            <template #default="{ row }">
+              <el-link v-if="row.originalUrl" :href="row.originalUrl" target="_blank" type="primary" style="margin-right:8px">原文</el-link>
+              <span v-else style="color:#909399;margin-right:8px">原文-</span>
+              <el-button type="primary" link @click="openLocalArticle(row)">本地</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </el-card>
 
@@ -169,6 +176,26 @@
         </div>
       </el-card>
     </template>
+
+    <el-dialog v-model="localArticleVisible" title="本地文章内容" width="760px">
+      <template v-if="selectedArticle">
+        <h3 style="margin-top:0">{{ selectedArticle.title || '无标题' }}</h3>
+        <div style="color:#909399;font-size:13px;margin-bottom:12px">
+          {{ selectedArticle.sourceName || '未知来源' }} · {{ selectedArticle.publishedAt || '-' }}
+        </div>
+        <el-alert
+          v-if="selectedArticle.originalUrl"
+          title="原文链接可能因网站删除、反爬或防盗链失效；下方为系统已保存的本地内容。"
+          type="info"
+          show-icon
+          :closable="false"
+          style="margin-bottom:12px"
+        />
+        <div style="white-space:pre-wrap;line-height:1.8;color:#303133;max-height:460px;overflow:auto">
+          {{ selectedArticle.contentPreview || selectedArticle.summary || '暂无本地正文预览' }}
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -194,6 +221,8 @@ const similarLoading = ref(false)
 const qaInput = ref('')
 const qaLoading = ref(false)
 const qaHistory = ref([])
+const localArticleVisible = ref(false)
+const selectedArticle = ref(null)
 
 // ECharts refs
 const trendChartRef = ref(null)
@@ -283,19 +312,7 @@ function renderTrendChart() {
   const dates = trend.map(t => t.date)
   const counts = trend.map(t => t.count)
 
-  // 找出峰值和谷值进行标注
-  const maxVal = Math.max(...counts)
-  const minVal = Math.min(...counts)
-  const maxIdx = counts.indexOf(maxVal)
-  const minIdx = counts.indexOf(minVal)
-
-  const markPoints = []
-  if (maxIdx >= 0) {
-    markPoints.push({ name: '峰值', coord: [maxIdx, maxVal], value: maxVal + '篇', symbol: 'pin', symbolSize: 36, itemStyle: { color: '#F56C6C' }, label: { fontSize: 11 } })
-  }
-  if (minIdx >= 0 && minIdx !== maxIdx) {
-    markPoints.push({ name: '低谷', coord: [minIdx, minVal], value: minVal + '篇', symbol: 'triangle', symbolSize: 20, itemStyle: { color: '#409EFF' }, label: { fontSize: 11 } })
-  }
+  const markPoints = buildTrendSemanticMarks(counts)
 
   trendChart.setOption({
     tooltip: { trigger: 'axis' },
@@ -316,6 +333,56 @@ function renderTrendChart() {
       }
     }]
   })
+}
+
+function buildTrendSemanticMarks(counts) {
+  if (!counts.length) return []
+  const marks = []
+  const used = new Set()
+  const addMark = (idx, name, color, symbol = 'pin') => {
+    if (idx < 0 || idx >= counts.length || used.has(idx)) return
+    used.add(idx)
+    marks.push({
+      name,
+      coord: [idx, counts[idx]],
+      value: `${name}\n${counts[idx]}篇`,
+      symbol,
+      symbolSize: name.length >= 4 ? 46 : 38,
+      itemStyle: { color },
+      label: { fontSize: 11 }
+    })
+  }
+
+  addMark(0, '首次报道', '#67C23A', 'circle')
+
+  let maxRiseIdx = -1
+  let maxRise = 0
+  for (let i = 1; i < counts.length; i++) {
+    const rise = counts[i] - counts[i - 1]
+    if (rise > maxRise) {
+      maxRise = rise
+      maxRiseIdx = i
+    }
+  }
+  if (maxRiseIdx > 0) addMark(maxRiseIdx, '快速升温', '#E6A23C', 'diamond')
+
+  const maxVal = Math.max(...counts)
+  const maxIdx = counts.indexOf(maxVal)
+  addMark(maxIdx, '热度峰值', '#F56C6C', 'pin')
+
+  let maxDropIdx = -1
+  let maxDrop = 0
+  for (let i = 1; i < counts.length; i++) {
+    const drop = counts[i - 1] - counts[i]
+    if (drop > maxDrop) {
+      maxDrop = drop
+      maxDropIdx = i
+    }
+  }
+  if (maxDropIdx > 0) addMark(maxDropIdx, '明显回落', '#409EFF', 'triangle')
+
+  if (counts.length > 1) addMark(counts.length - 1, '最新进展', '#909399', 'rect')
+  return marks
 }
 
 function renderSentimentChart() {
@@ -426,6 +493,11 @@ async function doAsk() {
 
 function goToEvent(eventId) {
   window.location.href = '/event/' + eventId
+}
+
+function openLocalArticle(row) {
+  selectedArticle.value = row
+  localArticleVisible.value = true
 }
 
 function handleResize() {

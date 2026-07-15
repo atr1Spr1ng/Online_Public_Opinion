@@ -47,6 +47,9 @@ SOURCE_INDICATORS: set[str] = {
     "介绍", "披露", "证实", "否认", "援引",
 }
 
+LOW_CONFIDENCE_RULE_MIN = 0.35
+LOW_CONFIDENCE_RULE_MAX = 0.65
+
 
 class FakeDetectionService:
     """虚假文本检测 — 规则引擎 + LLM"""
@@ -117,8 +120,19 @@ class FakeDetectionService:
             f"夸张格式: {f_format.score:.4f}",
         ]
 
-        # ── Step 2: LLM 文本质量评估（可用时） ──
-        if FakeDetectionConfig.enabled() and self.client:
+        mode = (request.mode or "").lower()
+        should_call_llm = (
+            mode != "fast"
+            and FakeDetectionConfig.enabled()
+            and self.client
+            and (
+                mode != "auto"
+                or LOW_CONFIDENCE_RULE_MIN <= rule_score <= LOW_CONFIDENCE_RULE_MAX
+            )
+        )
+
+        # ── Step 2: LLM 文本质量评估（精准模式直接用；自动模式低置信度兜底） ──
+        if should_call_llm:
             llm_result = self._call_llm(text)
             if llm_result is not None:
                 # 从文本质量维度推导虚假分数：
@@ -136,6 +150,8 @@ class FakeDetectionService:
                 hybrid_score = round(rule_score * 0.5 + llm_fake_score * 0.5, 4)
                 is_hybrid_fake = hybrid_score >= 0.5
                 details_parts.append(f"LLM文本质量-来源引用: {src:.2f}, 逻辑: {coh:.2f}, 情绪: {emo:.2f}, 信息完整: {inf:.2f}")
+                if mode == "auto":
+                    details_parts.append(f"自动模式低置信度LLM兜底: 规则分数 {rule_score:.4f}")
                 details_parts.append(f"LLM分析: {analysis}")
                 details_parts.append(f"LLM推导虚假分: {llm_fake_score:.4f}")
                 details_parts.append(f"混合得分: {hybrid_score:.4f}")
@@ -147,6 +163,9 @@ class FakeDetectionService:
                     features=features,
                     details=" | ".join(details_parts),
                 )
+
+        if mode == "auto" and LOW_CONFIDENCE_RULE_MIN <= rule_score <= LOW_CONFIDENCE_RULE_MAX:
+            details_parts.append("自动模式低置信度，但LLM不可用或调用失败，使用规则结果")
 
         # ── 降级: 纯规则结果 ──
         return FakeDetectionResponse(

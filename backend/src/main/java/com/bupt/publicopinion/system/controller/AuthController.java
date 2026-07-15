@@ -43,10 +43,14 @@ public class AuthController {
 
     @PostMapping("/login")
     public ApiResult<LoginResult> login(@Valid @RequestBody LoginRequest request) {
-        User user = userService.findByUsername(request.username());
+        User user = userService.findByUsernameIncludingDisabled(request.username());
+
+        if (user.getStatus() == null || user.getStatus() != 1) {
+            throw new AuthenticationException("账号已被禁用");
+        }
 
         if (!passwordEncoder.matches(request.password(), user.getPassword())) {
-            throw new AuthenticationException("用户名或密码错误");
+            throw new AuthenticationException("密码错误");
         }
 
         UserContext.UserContextInfo context = new UserContext.UserContextInfo(
@@ -56,6 +60,7 @@ public class AuthController {
         String accessToken = jwtTokenProvider.generateAccessToken(context);
         String refreshToken = jwtTokenProvider.generateRefreshToken(context);
         UserInfo userInfo = UserInfo.from(user);
+        userService.updateLastLogin(user.getId());
 
         long expiresIn = systemProperties.accessTokenExpiration().toSeconds();
         return ApiResult.success(LoginResult.of(accessToken, refreshToken, expiresIn, userInfo));

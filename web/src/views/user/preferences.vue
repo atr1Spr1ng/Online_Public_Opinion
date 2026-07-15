@@ -67,6 +67,7 @@
       <el-tab-pane label="新闻源订阅" name="sources">
         <div class="tab-header">
           <span class="tab-desc">订阅关注的新闻源，系统将优先展示已订阅来源的文章</span>
+          <span class="tab-desc">已订阅 {{ subscribedCount }} / {{ sources.length }}</span>
         </div>
 
         <el-table :data="sources" v-loading="srcLoading">
@@ -132,6 +133,7 @@ import {
 } from '@/api/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import { normalizeSourceList } from '@/utils/sourceSupport'
 
 const activeTab = ref('keywords')
 
@@ -227,12 +229,13 @@ async function handleDeleteDomain(id) {
 const sources = ref([])
 const srcLoading = ref(false)
 const sourceTypeMap = { portal: '门户', official: '官方', original: '原创' }
+const subscribedCount = computed(() => sources.value.filter(s => s.subscribed).length)
 
 async function loadSources() {
   srcLoading.value = true
   try {
     const res = await listSourceSubscriptions()
-    sources.value = res.data
+    sources.value = normalizeSourceList(res.data || [])
   } finally {
     srcLoading.value = false
   }

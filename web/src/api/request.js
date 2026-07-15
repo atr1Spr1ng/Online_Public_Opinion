@@ -31,6 +31,13 @@ function isAuthError(code) {
   return code === 401 || code === 403
 }
 
+function isLoginPageAuthRequest(config = {}) {
+  const url = config.url || ''
+  return router.currentRoute.value.path === '/login' && (
+    url.includes('/auth/login') || url.includes('/auth/register')
+  )
+}
+
 service.interceptors.request.use(config => {
   const userStore = useUserStore()
   if (userStore.token) {
@@ -49,8 +56,12 @@ service.interceptors.response.use(
     const res = response.data
     if (res.code === 200) return res
     if (isAuthError(res.code)) {
-      useUserStore().logout()
-      router.push('/login')
+      if (isLoginPageAuthRequest(response.config)) {
+        ElMessage.error(res.message || '登录失败')
+      } else {
+        useUserStore().logout()
+        router.push('/login')
+      }
     } else {
       ElMessage.error(res.message || '请求失败')
     }
@@ -59,9 +70,14 @@ service.interceptors.response.use(
   error => {
     hideLoading()
     if (isAuthError(error.response?.status)) {
+      const serverMsg = error.response?.data?.message
+      if (isLoginPageAuthRequest(error.config)) {
+        ElMessage.error(serverMsg || '登录失败')
+        return Promise.reject(serverMsg ? new Error(serverMsg) : error)
+      }
       useUserStore().logout()
       router.push('/login')
-      return Promise.reject(error)
+      return Promise.reject(serverMsg ? new Error(serverMsg) : error)
     }
     const serverMsg = error.response?.data?.message
     ElMessage.error(serverMsg || error.message || '网络异常')

@@ -19,11 +19,16 @@ public class PythonContentClient {
     }
 
     public CleanResult clean(ArticleRaw raw) {
+        return clean(raw, null);
+    }
+
+    public CleanResult clean(ArticleRaw raw, String mode) {
         Map<String, Object> body = Map.of(
                 "title", raw.getTitle() != null ? raw.getTitle() : "",
                 "content", raw.getContent() != null ? raw.getContent() : "",
                 "url", raw.getOriginalUrl() != null ? raw.getOriginalUrl() : "",
-                "language", raw.getLanguage() != null ? raw.getLanguage() : "zh"
+                "language", raw.getLanguage() != null ? raw.getLanguage() : "zh",
+                "mode", mode != null ? mode : ""
         );
 
         try {

@@ -63,7 +63,8 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { fetchSocialHot, getSources, searchByTopic } from '@/api/crawler'
+import { fetchSocialHot, getSources, createHotTopicTask } from '@/api/crawler'
+import { isTopicSearchSupported, normalizeSourceList } from '@/utils/sourceSupport'
 import { ElMessage } from 'element-plus'
 
 const activeTab = ref('weibo')
@@ -109,8 +110,8 @@ async function load(platform) {
 
 async function fetchSources() {
   try {
-    const res = await getSources({ pageNum: 1, pageSize: 100 })
-    sources.value = res.data?.records || res.data || []
+    const res = await getSources({ pageNum: 1, pageSize: 500 })
+    sources.value = normalizeSourceList(res.data?.records || res.data || []).filter(isTopicSearchSupported)
   } catch (_) {}
 }
 
@@ -125,17 +126,13 @@ async function doCollect() {
   if (collectForm.sourceIds.length === 0) return
   collecting.value = true
   try {
-    const res = await searchByTopic({
+    const res = await createHotTopicTask({
       keyword: collectForm.title,
       sourceIds: collectForm.sourceIds,
       limit: collectForm.limit
     })
-    const total = res.data?.totalSuccess || 0
-    if (total > 0) {
-      ElMessage.success(`已采集「${collectForm.title}」相关文章 ${total} 篇，进入数据流水线`)
-    } else {
-      ElMessage.info(`未找到与「${collectForm.title}」相关的文章`)
-    }
+    const taskId = res.data?.taskId
+    ElMessage.success(`已创建热搜采集任务${taskId ? ` #${taskId}` : ''}，可在首页后台任务查看`)
     collectVisible.value = false
   } catch {} finally {
     collecting.value = false

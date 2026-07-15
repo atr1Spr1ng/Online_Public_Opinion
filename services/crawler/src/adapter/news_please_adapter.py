@@ -1,13 +1,47 @@
 from datetime import datetime, timezone
+import re
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 from newsplease import NewsPlease
 from readability import Document
 
-from config.settings import CrawlerSettings, settings
-from exception.crawler_exception import CrawlerException
-from model.crawl_result import CrawlResult
+from src.config.settings import CrawlerSettings, settings
+from src.exception.crawler_exception import CrawlerException
+from src.model.crawl_result import CrawlResult
+
+
+MIN_NEWS_CONTENT_LENGTH = 80
+MAX_ARTICLE_AGE_DAYS = 365
+MAX_FUTURE_DAYS = 2
+DATE_CORRECTION_TOLERANCE_DAYS = 30
+
+NOISE_TITLES = {
+    "央视网",
+    "新华网",
+    "人民网",
+    "环球网",
+    "中国新闻网",
+    "中新网",
+    "新浪新闻",
+    "澎湃新闻",
+    "界面新闻",
+    "新闻中心",
+    "滚动新闻",
+    "专题",
+    "频道首页",
+    "首页",
+}
+
+NOISE_TITLE_KEYWORDS = (
+    "专题",
+    "频道首页",
+    "滚动新闻",
+    "新闻中心",
+    "客户端下载",
+    "网站地图",
+)
 
 
 class NewsPleaseAdapter:
@@ -74,7 +108,20 @@ class NewsPleaseAdapter:
         title = article.title or fallback_title
         content = article.maintext or fallback_content
         content_length = len(content.strip()) if content else 0
-        extract_status, message = self._build_extract_status(content_length)
+        extract_status, message = self._build_extract_status(title, content, content_length)
+        published_at, date_note = self._resolve_published_at(
+            article.date_publish,
+            html,
+            original_url,
+            final_url,
+        )
+        if extract_status == "SUCCESS":
+            date_status, date_message = self._validate_published_at(published_at)
+            if date_status:
+                extract_status = date_status
+                message = date_message
+            elif date_note:
+                message = f"{message}；{date_note}"
 
         return CrawlResult(
             engine="news-please",
@@ -83,7 +130,7 @@ class NewsPleaseAdapter:
             status_code=status_code,
             title=title,
             authors=list(article.authors or []),
-            published_at=article.date_publish,
+            published_at=published_at,
             content=content,
             content_length=content_length,
             extract_status=extract_status,
@@ -138,13 +185,65 @@ except Exception as e:
     def close(self) -> None:
         self._client.close()
 
+    def _build_extract_status(self, title: str | None, content: str | None, content_length: int) -> tuple[str, str]:
+        if content_length <= 0:
+            return (
+                "EMPTY_CONTENT",
+                "页面访问成功，但未抽取到正文。请确认 URL 是新闻详情页；首页、列表页或 JS 动态加载页面需要后续链接发现/动态渲染能力。",
+            )
+
+        normalized_title = self._normalize_title(title)
+        if self._is_noise_title(normalized_title):
+            return "NOISY_PAGE", f"疑似非新闻详情页：标题为站点名或栏目页 ({normalized_title or '空标题'})"
+
+        if content_length < MIN_NEWS_CONTENT_LENGTH:
+            return "NOISY_PAGE", f"疑似非新闻详情页：正文过短 ({content_length} 字符)"
+
+        if self._looks_like_navigation_page(normalized_title, content or ""):
+            return "NOISY_PAGE", "疑似非新闻详情页：页面内容更像导航/频道/专题页"
+
+        return "SUCCESS", "新闻正文抽取成功"
+
     @staticmethod
-    def _build_extract_status(content_length: int) -> tuple[str, str]:
-        if content_length > 0:
-            return "SUCCESS", "新闻正文抽取成功"
+    def _normalize_title(title: str | None) -> str:
+        if not title:
+            return ""
+        text = " ".join(title.split())
+        for sep in ("_央视网", "-央视网", "－央视网", "_新华网", "-新华网", "－新华网"):
+            if sep in text:
+                text = text.split(sep, 1)[0].strip()
+        return text.strip()
+
+    @staticmethod
+    def _is_noise_title(title: str) -> bool:
+        if not title:
+            return True
+        clean = title.strip(" -_—｜|")
+        if clean in NOISE_TITLES:
+            return True
+        if len(clean) <= 4 and any(site in clean for site in ("央视", "新华", "人民网", "环球")):
+            return True
+        return any(keyword == clean or clean.endswith(keyword) for keyword in NOISE_TITLE_KEYWORDS)
+
+    @staticmethod
+    def _looks_like_navigation_page(title: str, content: str) -> bool:
+        text = "\n".join(line.strip() for line in content.splitlines() if line.strip())
+        if not text:
+            return True
+
+        nav_words = ("首页", "频道", "专题", "客户端", "微博", "微信", "广告", "版权", "联系我们", "网站地图")
+        nav_hit_count = sum(1 for word in nav_words if word in text)
+        lines = [line for line in text.splitlines() if line]
+        avg_line_length = sum(len(line) for line in lines) / max(len(lines), 1)
+
+        if title in NOISE_TITLES and nav_hit_count >= 2:
+            return True
+        if len(lines) >= 12 and avg_line_length < 18 and nav_hit_count >= 4:
+            return True
         return (
-            "EMPTY_CONTENT",
-            "页面访问成功，但未抽取到正文。请确认 URL 是新闻详情页；首页、列表页或 JS 动态加载页面需要后续链接发现/动态渲染能力。",
+            "相关新闻" in text
+            and "更多" in text
+            and nav_hit_count >= 4
         )
 
     @staticmethod
@@ -178,3 +277,131 @@ except Exception as e:
 
         encoding = response.encoding or "utf-8"
         return bytes(body).decode(encoding, errors="replace")
+
+    def _resolve_published_at(
+        self,
+        extracted_at: datetime | None,
+        html: str,
+        original_url: str,
+        final_url: str,
+    ) -> tuple[datetime | None, str]:
+        """Prefer trustworthy publication dates.
+
+        news-please may pick unrelated page dates on some portals. If URL/meta
+        dates clearly disagree with the extracted date, use the site-specific
+        evidence instead.
+        """
+        meta_at = self._extract_meta_published_at(html)
+        url_at = self._extract_date_from_url(final_url) or self._extract_date_from_url(original_url)
+
+        candidate = extracted_at
+        note = ""
+
+        if candidate is None and meta_at is not None:
+            candidate = meta_at
+            note = "发布时间来自页面 meta 信息"
+
+        if candidate is None and url_at is not None:
+            candidate = url_at
+            note = "发布时间来自 URL 日期"
+        elif url_at is not None and candidate is not None:
+            delta = abs((self._as_date(candidate) - self._as_date(url_at)).days)
+            if delta > DATE_CORRECTION_TOLERANCE_DAYS:
+                candidate = url_at
+                note = "发布时间已按 URL 日期纠偏"
+        elif meta_at is not None and candidate is not None:
+            delta = abs((self._as_date(candidate) - self._as_date(meta_at)).days)
+            if delta > DATE_CORRECTION_TOLERANCE_DAYS:
+                candidate = meta_at
+                note = "发布时间已按页面 meta 信息纠偏"
+
+        return candidate, note
+
+    @staticmethod
+    def _validate_published_at(published_at: datetime | None) -> tuple[str | None, str]:
+        if published_at is None:
+            return None, ""
+        today = datetime.now(timezone.utc).date()
+        published_date = NewsPleaseAdapter._as_date(published_at)
+        age_days = (today - published_date).days
+        if age_days > MAX_ARTICLE_AGE_DAYS:
+            return "STALE_ARTICLE", f"文章发布时间超过 {MAX_ARTICLE_AGE_DAYS} 天，已跳过入库"
+        if age_days < -MAX_FUTURE_DAYS:
+            return "DATE_OUT_OF_RANGE", "文章发布时间明显晚于当前时间，已跳过入库"
+        return None, ""
+
+    @staticmethod
+    def _extract_meta_published_at(html: str) -> datetime | None:
+        soup = BeautifulSoup(html, "lxml")
+        meta_names = (
+            ("property", "article:published_time"),
+            ("property", "og:published_time"),
+            ("name", "pubdate"),
+            ("name", "publishdate"),
+            ("name", "publishDate"),
+            ("name", "date"),
+            ("name", "weibo: article:create_at"),
+            ("itemprop", "datePublished"),
+        )
+        for attr, value in meta_names:
+            tag = soup.find("meta", attrs={attr: value})
+            content = tag.get("content") if tag else None
+            parsed = NewsPleaseAdapter._parse_datetime(content)
+            if parsed:
+                return parsed
+
+        time_tag = soup.find("time")
+        if time_tag:
+            parsed = NewsPleaseAdapter._parse_datetime(time_tag.get("datetime") or time_tag.get_text(" ", strip=True))
+            if parsed:
+                return parsed
+        return None
+
+    @staticmethod
+    def _extract_date_from_url(url: str) -> datetime | None:
+        path = urlparse(url).path
+        patterns = (
+            r"/(20\d{2})-(\d{2})-(\d{2})/",
+            r"/(20\d{2})/(\d{2})-(\d{2})/",
+            r"/(20\d{2})/(\d{2})/(\d{2})/",
+            r"/(20\d{2})(\d{2})(\d{2})/",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, path)
+            if match:
+                year, month, day = map(int, match.groups())
+                try:
+                    return datetime(year, month, day)
+                except ValueError:
+                    return None
+        return None
+
+    @staticmethod
+    def _parse_datetime(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        normalized = text.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            pass
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M",
+            "%Y/%m/%d",
+        ):
+            try:
+                return datetime.strptime(text[:19], fmt)
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _as_date(value: datetime):
+        return value.date()

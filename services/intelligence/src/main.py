@@ -15,12 +15,14 @@ from src.api.topic_api import router as topic_router
 from src.api.trend_api import router as trend_router
 from src.api.summary_api import router as summary_router
 from src.api.propagation_api import router as propagation_router
+from src.api.search_api import router as search_router
 app.include_router(analysis_router)
 app.include_router(clustering_router)
 app.include_router(topic_router)
 app.include_router(trend_router)
 app.include_router(summary_router)
 app.include_router(propagation_router)
+app.include_router(search_router)
 
 
 @app.get("/internal/health")

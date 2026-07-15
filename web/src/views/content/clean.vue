@@ -6,15 +6,20 @@
         <div class="card-header">
           <span>待清洗原始文章</span>
           <div style="display:flex;gap:8px">
-            <el-button type="danger" @click="batchDeleteRaw" :disabled="!selectedRawIds.length">
-              批量删除 ({{ selectedRawIds.length }})
+            <el-button type="danger" @click="batchDeleteRaw" :disabled="!hasRawSelection">
+              删除选中
             </el-button>
-            <el-button type="primary" @click="batchClean" :disabled="!selected.length">
-              批量清洗 ({{ selected.length }})
+            <el-button type="primary" @click="batchClean" :disabled="!hasRawSelection">
+              清洗选中
             </el-button>
           </div>
         </div>
       </template>
+      <div class="selection-toolbar">
+        <el-checkbox v-model="selectAllRaw">
+          选择全部待清洗原始文章（共 {{ rawTotal }} 篇）
+        </el-checkbox>
+      </div>
       <el-table
         :data="rawArticles" v-loading="rawLoading" border stripe
         @selection-change="val => { selected = val.map(i => i.id); selectedRawIds = val.map(i => i.id) }"
@@ -43,11 +48,14 @@
       <template #header>
         <div class="card-header">
           <span>已清洗文章</span>
-          <el-button type="danger" @click="batchDeleteCleaned" :disabled="!selectedCleanedRows.length">
-            批量删除 ({{ selectedCleanedRows.length }})
-          </el-button>
+          <el-button type="danger" @click="batchDeleteCleaned" :disabled="!hasCleanedSelection">删除选中</el-button>
         </div>
       </template>
+      <div class="selection-toolbar">
+        <el-checkbox v-model="selectAllCleaned">
+          选择全部已清洗文章（共 {{ cleanTotal }} 篇）
+        </el-checkbox>
+      </div>
       <el-table :data="cleanedArticles" v-loading="cleanLoading" border stripe @selection-change="val => selectedCleanedRows = val">
         <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="60" />
@@ -91,10 +99,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { getArticles, deleteArticle } from '@/api/crawler'
 import { getCleanArticles, cleanArticle, batchClean as batchCleanApi, deleteCleanArticle } from '@/api/content'
-import { ElMessage } from 'element-plus'
+import { fetchAllPaged } from '@/utils/pagedFetch'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 // ---- 待清洗原始文章 ----
 const rawLoading = ref(false)
@@ -103,6 +112,8 @@ const rawTotal = ref(0)
 const rawPage = reactive({ pageNum: 1, pageSize: 10 })
 const selected = ref([])
 const selectedRawIds = ref([])
+const selectAllRaw = ref(false)
+const hasRawSelection = computed(() => selectAllRaw.value || selectedRawIds.value.length > 0)
 
 async function fetchRawArticles() {
   rawLoading.value = true
@@ -120,6 +131,8 @@ const cleanedArticles = ref([])
 const cleanTotal = ref(0)
 const cleanPage = reactive({ pageNum: 1, pageSize: 10 })
 const selectedCleanedRows = ref([])
+const selectAllCleaned = ref(false)
+const hasCleanedSelection = computed(() => selectAllCleaned.value || selectedCleanedRows.value.length > 0)
 const detailVisible = ref(false)
 const detail = ref({})
 
@@ -135,18 +148,24 @@ async function fetchCleanedArticles() {
 
 // ---- 清洗操作 ----
 async function batchDeleteRaw() {
-  const ids = [...selectedRawIds.value]
+  const ids = selectAllRaw.value
+    ? (await fetchAllPaged(getArticles, { excludeCleaned: true })).map(i => i.id)
+    : [...selectedRawIds.value]
   if (!ids.length) return
   try {
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 篇原始文章？`, '删除确认', { type: 'warning' })
     for (const id of ids) {
       await deleteArticle(id)
     }
     ElMessage.success(`已删除 ${ids.length} 篇文章`)
     selectedRawIds.value = []
     selected.value = []
+    selectAllRaw.value = false
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch {}
+  } catch (e) {
+    if (e !== 'cancel') {}
+  }
 }
 
 async function cleanSingle(row) {
@@ -159,10 +178,17 @@ async function cleanSingle(row) {
 }
 
 async function batchClean() {
+  const ids = selectAllRaw.value
+    ? (await fetchAllPaged(getArticles, { excludeCleaned: true })).map(i => i.id)
+    : [...selected.value]
+  if (!ids.length) return
   try {
-    await batchCleanApi(selected.value)
-    ElMessage.success(`批量清洗 ${selected.value.length} 篇文章完成`)
+    const res = await batchCleanApi(ids)
+    const taskId = res.data?.id || res.id
+    ElMessage.success(taskId ? `后台清洗任务已提交：#${taskId}` : `后台清洗任务已提交，共 ${ids.length} 篇`)
     selected.value = []
+    selectedRawIds.value = []
+    selectAllRaw.value = false
     fetchRawArticles()
     fetchCleanedArticles()
   } catch {}
@@ -180,17 +206,23 @@ async function handleDelete(row) {
 }
 
 async function batchDeleteCleaned() {
-  const rows = [...selectedCleanedRows.value]
-  if (!rows.length) return
+  const ids = selectAllCleaned.value
+    ? (await fetchAllPaged(getCleanArticles)).map(i => i.id)
+    : selectedCleanedRows.value.map(i => i.id)
+  if (!ids.length) return
   try {
-    for (const row of rows) {
-      await deleteCleanArticle(row.id)
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 条清洗记录？`, '删除确认', { type: 'warning' })
+    for (const id of ids) {
+      await deleteCleanArticle(id)
     }
-    ElMessage.success(`批量删除 ${rows.length} 条清洗记录完成`)
+    ElMessage.success(`已删除 ${ids.length} 条清洗记录`)
     selectedCleanedRows.value = []
+    selectAllCleaned.value = false
     fetchRawArticles()
     fetchCleanedArticles()
-  } catch {}
+  } catch (e) {
+    if (e !== 'cancel') {}
+  }
 }
 
 onMounted(() => {
@@ -201,6 +233,10 @@ onMounted(() => {
 
 <style scoped>
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.selection-toolbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px; color: #606266; font-size: 13px;
+}
 .content-box {
   margin-top: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap;
   line-height: 1.8; background: #fafafa; padding: 12px; border-radius: 4px;

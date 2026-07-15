@@ -5,15 +5,15 @@ from threading import Lock
 
 from openai import OpenAI
 
-from adapter.news_link_discoverer import NewsLinkDiscoverer
-from adapter.news_please_adapter import NewsPleaseAdapter
-from adapter.search_adapter import TopicSearchAdapter
-from config.settings import KEYWORD_SPLIT_PROMPT, KeywordSplitConfig
-from exception.crawler_exception import CrawlerException
-from model.crawl_result import CrawlResult
-from model.news_collect_result import FailedNewsCrawl, NewsCollectResult
-from model.news_discover_result import NewsDiscoverResult
-from model.topic_search_result import TopicSearchResult
+from src.adapter.news_link_discoverer import NewsLinkDiscoverer
+from src.adapter.news_please_adapter import NewsPleaseAdapter
+from src.adapter.search_adapter import TopicSearchAdapter
+from src.config.settings import KEYWORD_SPLIT_PROMPT, KeywordSplitConfig
+from src.exception.crawler_exception import CrawlerException
+from src.model.crawl_result import CrawlResult
+from src.model.news_collect_result import FailedNewsCrawl, NewsCollectResult
+from src.model.news_discover_result import NewsDiscoverResult
+from src.model.topic_search_result import TopicSearchResult
 
 
 class CrawlerService:
