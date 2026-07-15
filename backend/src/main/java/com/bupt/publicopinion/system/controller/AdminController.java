@@ -231,13 +231,17 @@ public class AdminController {
     @GetMapping("/articles")
     public ApiResult<PageResult<AdminArticleItem>> listArticles(
             @RequestParam(defaultValue = "1") int pageNum,
-            @RequestParam(defaultValue = "10") int pageSize
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo
     ) {
+        LambdaQueryWrapper<ArticleRaw> wrapper = new LambdaQueryWrapper<ArticleRaw>()
+                .orderByDesc(ArticleRaw::getCreateTime)
+                .ge(dateFrom != null && !dateFrom.isBlank(), ArticleRaw::getCreateTime, dateFrom)
+                .le(dateTo != null && !dateTo.isBlank(), ArticleRaw::getCreateTime, dateTo)
+                .select(ArticleRaw::getId, ArticleRaw::getTitle, ArticleRaw::getSourceName, ArticleRaw::getCreateTime);
         Page<ArticleRaw> page = new Page<>(pageNum, pageSize);
-        IPage<ArticleRaw> result = articleRawMapper.selectPage(page,
-                new LambdaQueryWrapper<ArticleRaw>()
-                        .orderByDesc(ArticleRaw::getCreateTime)
-                        .select(ArticleRaw::getId, ArticleRaw::getTitle, ArticleRaw::getSourceName, ArticleRaw::getCreateTime));
+        IPage<ArticleRaw> result = articleRawMapper.selectPage(page, wrapper);
 
         List<AdminArticleItem> items = result.getRecords().stream().map(AdminArticleItem::fromRaw).toList();
         return ApiResult.success(new PageResult<>(items, result.getTotal(), pageNum, pageSize));
@@ -263,12 +267,16 @@ public class AdminController {
     @GetMapping("/events")
     public ApiResult<PageResult<AdminEventItem>> listEvents(
             @RequestParam(defaultValue = "1") int pageNum,
-            @RequestParam(defaultValue = "10") int pageSize
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo
     ) {
+        LambdaQueryWrapper<Event> wrapper = new LambdaQueryWrapper<Event>()
+                .orderByDesc(Event::getCreateTime)
+                .ge(dateFrom != null && !dateFrom.isBlank(), Event::getCreateTime, dateFrom)
+                .le(dateTo != null && !dateTo.isBlank(), Event::getCreateTime, dateTo);
         Page<Event> page = new Page<>(pageNum, pageSize);
-        IPage<Event> result = eventMapper.selectPage(page,
-                new LambdaQueryWrapper<Event>()
-                        .orderByDesc(Event::getCreateTime));
+        IPage<Event> result = eventMapper.selectPage(page, wrapper);
 
         List<AdminEventItem> items = result.getRecords().stream().map(AdminEventItem::from).toList();
         return ApiResult.success(new PageResult<>(items, result.getTotal(), pageNum, pageSize));

@@ -37,10 +37,10 @@
               <span class="link-text" @click="openDialog('events', '今日新增事件')">{{ stats.todayEvents }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="ES 文章索引">
-              <span class="link-text" @click="openDialog('esArticles', 'ES article_clean 索引')">{{ stats.esArticleCount }}</span>
+              <span class="link-text" @click="openDialog('esArticles', 'ES文章索引')">{{ stats.esArticleCount }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="ES 事件索引">
-              <span class="link-text" @click="openDialog('esEvents', 'ES events 索引')">{{ stats.esEventCount }}</span>
+              <span class="link-text" @click="openDialog('esEvents', 'ES事件索引')">{{ stats.esEventCount }}</span>
             </el-descriptions-item>
           </el-descriptions>
         </el-card>
@@ -146,12 +146,21 @@ async function openDialog(type, title) {
   await fetchDialogData()
 }
 
+function todayDate() {
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+
 async function fetchDialogData() {
   const fetcher = dialogFetchers[dialog.type]
   if (!fetcher) return
   dialog.loading = true
   try {
-    const res = await fetcher({ pageNum: dialog.pageNum, pageSize: dialog.pageSize })
+    const params = { pageNum: dialog.pageNum, pageSize: dialog.pageSize }
+    if (dialog.title.startsWith('今日新增')) {
+      params.dateFrom = todayDate()
+    }
+    const res = await fetcher(params)
     const d = res.data
     dialog.data = d.records || d.data || []
     dialog.total = d.total || 0
